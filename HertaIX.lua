@@ -2747,10 +2747,264 @@ function HertaIX:CreateWindow(titleText, theme)
 					return imgObj
 				end
 
+					-- --------------------------------------------------------
+					--  Tab:AddViewport(Config)
+					-- --------------------------------------------------------
+					function Tab:AddViewport(Config)
+						Config = Config or {}
+						local height  = Config.Height or 80
+						local doRotate = Config.Rotate ~= false
+
+						-- 外枠（L字コーナー付き）
+						local Bg = MakeHertaFrame(
+							tabEntry.Page,
+							UDim2.new(1, 0, 0, height),
+							NextOrder()
+						)
+
+						-- 左側: ViewportFrame（幅40%）
+						local VP = Instance.new("ViewportFrame")
+						VP.Size = UDim2.new(0.4, -4, 1, -4)
+						VP.Position = UDim2.fromOffset(2, 2)
+						VP.BackgroundColor3 = C_BG
+						VP.BackgroundTransparency = 0.3
+						VP.BorderSizePixel = 0
+						VP.ZIndex = 3
+						VP.Parent = Bg
+						table.insert(ThemeListeners, { type = "bg", obj = VP })
+
+						-- ViewportFrame専用カメラ
+						local VPCam = Instance.new("Camera")
+						VP.CurrentCamera = VPCam
+						VPCam.Parent = VP
+
+						-- 右側: 情報パネル（幅60%）
+						local InfoPanel = Instance.new("Frame")
+						InfoPanel.Size = UDim2.new(0.6, -6, 1, -4)
+						InfoPanel.Position = UDim2.new(0.4, 4, 0, 2)
+						InfoPanel.BackgroundTransparency = 1
+						InfoPanel.BorderSizePixel = 0
+						InfoPanel.ZIndex = 3
+						InfoPanel.Parent = Bg
+
+						local function MakeInfoLabel(yOffset, labelText)
+							local lbl = Instance.new("TextLabel")
+							lbl.Size = UDim2.new(1, 0, 0, 13)
+							lbl.Position = UDim2.fromOffset(2, yOffset)
+							lbl.BackgroundTransparency = 1
+							lbl.BorderSizePixel = 0
+							lbl.Font = Enum.Font.Code
+							lbl.TextSize = 10
+							lbl.TextXAlignment = Enum.TextXAlignment.Left
+							lbl.TextColor3 = C_ACCENT_LT
+							lbl.Text = labelText
+							lbl.ZIndex = 4
+							lbl.Parent = InfoPanel
+							table.insert(ThemeListeners, { type = "text_lt", obj = lbl })
+							return lbl
+						end
+
+						local NameLabel = MakeInfoLabel(4,  "Name: --")
+						local IdLabel   = MakeInfoLabel(19, "ID:   --")
+						local PosLabel  = MakeInfoLabel(34, "Pos:  --")
+
+						-- HPゲージ背景
+						local HPTrack = Instance.new("Frame")
+						HPTrack.Size = UDim2.new(1, -4, 0, 7)
+						HPTrack.Position = UDim2.fromOffset(2, 52)
+						HPTrack.BackgroundColor3 = C_BG
+						HPTrack.BackgroundTransparency = 0.3
+						HPTrack.BorderSizePixel = 0
+						HPTrack.ZIndex = 4
+						HPTrack.Parent = InfoPanel
+						table.insert(ThemeListeners, { type = "track", obj = HPTrack })
+
+						-- HPゲージ塗り
+						local HPFill = Instance.new("Frame")
+						HPFill.Size = UDim2.new(0, 0, 1, 0)
+						HPFill.BackgroundColor3 = C_ACCENT
+						HPFill.BackgroundTransparency = 0
+						HPFill.BorderSizePixel = 0
+						HPFill.ZIndex = 5
+						HPFill.Parent = HPTrack
+						table.insert(ThemeListeners, { type = "fill", obj = HPFill })
+
+						-- HPテキスト
+						local HPLabel = MakeInfoLabel(62, "HP: NaN / NaN")
+
+						-- 内部状態
+						local _rotConn = nil
+						local _hpConn  = nil
+						local _posConn = nil
+						local _currentModel = nil
+
+						-- HP更新
+						local function UpdateHP(hum)
+							if _hpConn then _hpConn:Disconnect() end
+							if not hum then
+								HPLabel.Text = "HP: NaN / NaN"
+								HPFill.Size = UDim2.new(0, 0, 1, 0)
+								return
+							end
+							local function RefreshHP()
+								local ok, hp, maxHp = pcall(function()
+									return hum.Health, hum.MaxHealth
+								end)
+								if ok then
+									local ratio = (maxHp > 0) and (hp / maxHp) or 0
+									HPLabel.Text = string.format("HP: %.0f / %.0f", hp, maxHp)
+									HPFill.Size = UDim2.new(math.clamp(ratio, 0, 1), 0, 1, 0)
+								else
+									HPLabel.Text = "HP: NaN / NaN"
+									HPFill.Size = UDim2.new(0, 0, 1, 0)
+								end
+							end
+							RefreshHP()
+							_hpConn = hum.HealthChanged:Connect(RefreshHP)
+						end
+
+						-- 位置更新
+						local function UpdatePos(rootPart)
+							if _posConn then _posConn:Disconnect() end
+							if not rootPart then
+								PosLabel.Text = "Pos: --"
+								return
+							end
+							local function RefreshPos()
+								local ok, p = pcall(function() return rootPart.Position end)
+								if ok then
+									PosLabel.Text = string.format(
+										"Pos: %.1f, %.1f, %.1f", p.X, p.Y, p.Z
+									)
+								else
+									PosLabel.Text = "Pos: --"
+								end
+							end
+							RefreshPos()
+							_posConn = game:GetService("RunService").Heartbeat:Connect(function()
+								if not rootPart or not rootPart.Parent then
+									_posConn:Disconnect()
+									return
+								end
+								RefreshPos()
+							end)
+						end
+
+						-- モデルをViewportに配置してカメラを自動設定
+						local function PlaceModel(model)
+							-- 既存の子を削除（カメラ以外）
+							for _, c in ipairs(VP:GetChildren()) do
+								if c:IsA("Camera") then continue end
+								c:Destroy()
+							end
+							if not model then return end
+
+							local cloned = model:Clone()
+							cloned.Parent = VP
+							_currentModel = cloned
+
+							-- BoundingBoxからカメラ位置を自動計算
+							local ok, cf, size = pcall(function()
+								return cloned:GetBoundingBox()
+							end)
+							local center = ok and cf.Position or Vector3.new(0, 0, 0)
+							local dist   = ok and (size.Magnitude * 1.2) or 8
+							VPCam.CFrame = CFrame.new(
+								center + Vector3.new(dist * 0.5, dist * 0.4, dist),
+								center
+							)
+
+							-- 回転アニメーション
+							if _rotConn then _rotConn:Disconnect() end
+							if doRotate then
+								local root = cloned:FindFirstChild("HumanoidRootPart")
+										or cloned:FindFirstChildWhichIsA("BasePart")
+								if root then
+									_rotConn = game:GetService("RunService").Heartbeat:Connect(function()
+										if not root.Parent then _rotConn:Disconnect() return end
+										root.CFrame = root.CFrame * CFrame.Angles(0, math.rad(1.2), 0)
+									end)
+								end
+							end
+						end
+
+						-- ViewportObject API
+						local vpObj = {}
+
+						function vpObj:SetTarget(target)
+							-- target: Player または Model
+							local model, name, userId, hum, rootPart
+
+							local ok, isPlayer = pcall(function()
+								return target:IsA("Player")
+							end)
+
+							if ok and isPlayer then
+								name   = target.Name
+								userId = tostring(target.UserId)
+								model  = target.Character
+							else
+								name   = target.Name
+								userId = "--"
+								model  = target
+							end
+
+							NameLabel.Text = "Name: " .. (name or "--")
+							IdLabel.Text   = "ID:   " .. (userId or "--")
+
+							if model then
+								PlaceModel(model)
+								hum      = model:FindFirstChildOfClass("Humanoid")
+								rootPart = model:FindFirstChild("HumanoidRootPart")
+										 or model:FindFirstChildWhichIsA("BasePart")
+							end
+
+							UpdateHP(hum)
+							UpdatePos(rootPart)
+						end
+
+						function vpObj:SetCamera(cframe)
+							VPCam.CFrame = cframe
+						end
+
+						function vpObj:SetRotate(bool)
+							doRotate = bool
+							if not bool and _rotConn then
+								_rotConn:Disconnect()
+								_rotConn = nil
+							end
+						end
+
+						function vpObj:GetViewport()
+							return VP
+						end
+
+						function vpObj:Clear()
+							if _rotConn then _rotConn:Disconnect() end
+							if _hpConn  then _hpConn:Disconnect()  end
+							if _posConn then _posConn:Disconnect() end
+							for _, c in ipairs(VP:GetChildren()) do
+								if not c:IsA("Camera") then c:Destroy() end
+							end
+							NameLabel.Text = "Name: --"
+							IdLabel.Text   = "ID:   --"
+							PosLabel.Text  = "Pos:  --"
+							HPLabel.Text   = "HP: NaN / NaN"
+							HPFill.Size    = UDim2.new(0, 0, 1, 0)
+						end
+
+						-- 初期ターゲットがあれば適用
+						if Config.Target then
+							vpObj:SetTarget(Config.Target)
+						end
+
+						return vpObj
+					end
+
+					-- --------------------------------------------------------
+					--  Tab:AddParagraph(titleText, descText)
 				-- --------------------------------------------------------
-				--  Tab:AddParagraph(titleText, descText)
-			-- --------------------------------------------------------
-		function Tab:AddParagraph(pTitle, descText)
+				function Tab:AddParagraph(pTitle, descText)
 
 			local Bg = Instance.new("Frame")
 			Bg.Size = UDim2.new(1, 0, 0, 40)
