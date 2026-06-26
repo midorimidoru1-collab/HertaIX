@@ -2775,8 +2775,19 @@ function HertaIX:CreateWindow(titleText, theme)
 
 						-- ViewportFrame専用カメラ
 						local VPCam = Instance.new("Camera")
+						VPCam.Name = "Camera"
 						VP.CurrentCamera = VPCam
 						VPCam.Parent = VP
+
+						-- WorldModel（アニメーション・物理が正しく動作する）
+						local WorldModel = Instance.new("WorldModel")
+						WorldModel.Name = "WorldModel"
+						WorldModel.Parent = VP
+
+						-- ライティング設定
+						VP.Ambient       = Color3.fromRGB(200, 200, 200)
+						VP.LightColor    = Color3.fromRGB(255, 255, 255)
+						VP.LightDirection = Vector3.new(-1, -1, -1)
 
 						-- 右側: 情報パネル（幅60%）
 						local InfoPanel = Instance.new("Frame")
@@ -2833,10 +2844,27 @@ function HertaIX:CreateWindow(titleText, theme)
 						local HPLabel = MakeInfoLabel(62, "HP: NaN / NaN")
 
 						-- 内部状態
-						local _rotConn = nil
-						local _hpConn  = nil
-						local _posConn = nil
-						local _currentModel = nil
+						local _renderConn  = nil
+						local _hpConn      = nil
+						local _posConn     = nil
+						local _currentClone = nil
+
+						-- カメラ固定CFrame（正面やや上から見下ろす）
+						local CLONE_ORIGIN = CFrame.new(0, 0, 0)
+						local CAMERA_CF = CFrame.lookAt(
+							Vector3.new(0, 1.5, -8),
+							Vector3.new(0, 1.5, 0)
+						)
+
+						-- Neck Motor6Dを探す
+						local function FindNeckMotor(char)
+							for _, v in ipairs(char:GetDescendants()) do
+								if v:IsA("Motor6D") and v.Name == "Neck" then
+									return v
+								end
+							end
+							return nil
+						end
 
 						-- HP更新
 						local function UpdateHP(hum)
@@ -2890,42 +2918,102 @@ function HertaIX:CreateWindow(titleText, theme)
 							end)
 						end
 
-						-- モデルをViewportに配置してカメラを自動設定
-						local function PlaceModel(model)
-							-- 既存の子を削除（カメラ以外）
-							for _, c in ipairs(VP:GetChildren()) do
-								if c:IsA("Camera") then continue end
-								c:Destroy()
-							end
-							if not model then return end
+						-- クローンのクリーンアップ
+						local function CleanupClone()
+							if _renderConn then _renderConn:Disconnect(); _renderConn = nil end
+							if _currentClone then _currentClone:Destroy(); _currentClone = nil end
+						end
 
-							local cloned = model:Clone()
-							cloned.Parent = VP
-							_currentModel = cloned
+						-- キャラクターをViewportに配置してアニメーション同期を開始
+						local function PlaceModel(targetCharacter)
+							CleanupClone()
+							if not targetCharacter then return end
 
-							-- BoundingBoxからカメラ位置を自動計算
-							local ok, cf, size = pcall(function()
-								return cloned:GetBoundingBox()
-							end)
-							local center = ok and cf.Position or Vector3.new(0, 0, 0)
-							local dist   = ok and (size.Magnitude * 1.2) or 8
-							VPCam.CFrame = CFrame.new(
-								center + Vector3.new(dist * 0.5, dist * 0.4, dist),
-								center
-							)
+							-- Archivable設定してクローン作成
+							targetCharacter.Archivable = true
+							local clone = targetCharacter:Clone()
 
-							-- 回転アニメーション
-							if _rotConn then _rotConn:Disconnect() end
-							if doRotate then
-								local root = cloned:FindFirstChild("HumanoidRootPart")
-										or cloned:FindFirstChildWhichIsA("BasePart")
-								if root then
-									_rotConn = game:GetService("RunService").Heartbeat:Connect(function()
-										if not root.Parent then _rotConn:Disconnect() return end
-										root.CFrame = root.CFrame * CFrame.Angles(0, math.rad(1.2), 0)
-									end)
+							-- スクリプト類を削除
+							for _, v in ipairs(clone:GetDescendants()) do
+								if v:IsA("Script") or v:IsA("LocalScript") or v:IsA("ModuleScript") then
+									v:Destroy()
 								end
 							end
+
+							clone.Parent = WorldModel
+							_currentClone = clone
+
+							-- カメラ固定
+							VPCam.CFrame = CAMERA_CF
+
+							local targetHumanoid = targetCharacter:WaitForChild("Humanoid", 5)
+							local cloneHumanoid  = clone:WaitForChild("Humanoid", 5)
+							local targetRoot     = targetCharacter:WaitForChild("HumanoidRootPart", 5)
+							local cloneRoot      = clone:WaitForChild("HumanoidRootPart", 5)
+
+							if not (targetHumanoid and cloneHumanoid and targetRoot and cloneRoot) then return end
+
+							-- Neck Motor6D取得
+							local targetNeck = FindNeckMotor(targetCharacter)
+							local cloneNeck  = FindNeckMotor(clone)
+
+							-- Animator取得（なければ作成）
+							local targetAnimator = targetHumanoid:FindFirstChildOfClass("Animator")
+								or Instance.new("Animator", targetHumanoid)
+							local cloneAnimator = cloneHumanoid:FindFirstChildOfClass("Animator")
+								or Instance.new("Animator", cloneHumanoid)
+
+							-- アニメーション同期用テーブル
+							local activeTracks = {}
+
+							_renderConn = game:GetService("RunService").RenderStepped:Connect(function()
+								if not targetCharacter.Parent or not targetRoot.Parent or not cloneRoot.Parent then
+									return
+								end
+
+								-- ① HumanoidRootPart: XZ固定・ヨー角のみ同期
+								local targetRootCF = targetRoot.CFrame
+								local _, targetYaw, _ = targetRootCF:ToEulerAnglesYXZ()
+								cloneRoot.CFrame = CLONE_ORIGIN * CFrame.Angles(0, targetYaw, 0)
+
+								-- ② Neck Transform同期
+								if targetNeck and cloneNeck then
+									cloneNeck.Transform = targetNeck.Transform
+								end
+
+								-- ③ アニメーション同期
+								local playingTracks = targetAnimator:GetPlayingAnimationTracks()
+
+								for _, track in ipairs(playingTracks) do
+									local animId = track.Animation.AnimationId
+									if not activeTracks[animId] then
+										local cloneTrack = cloneAnimator:LoadAnimation(track.Animation)
+										cloneTrack:Play()
+										activeTracks[animId] = cloneTrack
+									end
+									local cTrack = activeTracks[animId]
+									if cTrack then
+										cTrack.TimePosition = track.TimePosition
+										cTrack:AdjustWeight(track.WeightCurrent)
+										cTrack:AdjustSpeed(track.Speed)
+									end
+								end
+
+								-- 停止したトラックの処理
+								for animId, cTrack in pairs(activeTracks) do
+									local isPlaying = false
+									for _, track in ipairs(playingTracks) do
+										if track.Animation.AnimationId == animId then
+											isPlaying = true
+											break
+										end
+									end
+									if not isPlaying then
+										cTrack:Stop()
+										activeTracks[animId] = nil
+									end
+								end
+							end)
 						end
 
 						-- ViewportObject API
@@ -2967,25 +3055,14 @@ function HertaIX:CreateWindow(titleText, theme)
 							VPCam.CFrame = cframe
 						end
 
-						function vpObj:SetRotate(bool)
-							doRotate = bool
-							if not bool and _rotConn then
-								_rotConn:Disconnect()
-								_rotConn = nil
-							end
-						end
-
 						function vpObj:GetViewport()
 							return VP
 						end
 
 						function vpObj:Clear()
-							if _rotConn then _rotConn:Disconnect() end
-							if _hpConn  then _hpConn:Disconnect()  end
-							if _posConn then _posConn:Disconnect() end
-							for _, c in ipairs(VP:GetChildren()) do
-								if not c:IsA("Camera") then c:Destroy() end
-							end
+							CleanupClone()
+							if _hpConn  then _hpConn:Disconnect();  _hpConn  = nil end
+							if _posConn then _posConn:Disconnect(); _posConn = nil end
 							NameLabel.Text = "Name: --"
 							IdLabel.Text   = "ID:   --"
 							PosLabel.Text  = "Pos:  --"
