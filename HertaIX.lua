@@ -2747,366 +2747,33 @@ function HertaIX:CreateWindow(titleText, theme)
 					return imgObj
 				end
 
+
 					-- --------------------------------------------------------
 					--  Tab:AddViewport(Config)
+					--  Config:
+					--    Height      : number          -- フレーム高さ(px)、デフォルト80
+					--    Target      : Player|Model    -- 初期ターゲット（省略可）
+					--    MultiPlayer : boolean         -- true でマルチプレイヤーモード
+					--    WindowRef   : Window          -- 通知用Windowオブジェクト（MultiPlayer時）
 					-- --------------------------------------------------------
 					function Tab:AddViewport(Config)
 						Config = Config or {}
-						local height  = Config.Height or 80
-						local doRotate = Config.Rotate ~= false
+						local height      = Config.Height      or 80
+						local multiPlayer = Config.MultiPlayer == true
+						local WindowRef   = Config.WindowRef
 
-						-- 外枠（L字コーナー付き）
-						local Bg = MakeHertaFrame(
-							tabEntry.Page,
-							UDim2.new(1, 0, 0, height),
-							NextOrder()
-						)
-
-						-- 左側: ViewportFrame（幅40%）
-						local VP = Instance.new("ViewportFrame")
-						VP.Size = UDim2.new(0.4, -4, 1, -4)
-						VP.Position = UDim2.fromOffset(2, 2)
-						VP.BackgroundColor3 = C_BG
-						VP.BackgroundTransparency = 0.3
-						VP.BorderSizePixel = 0
-						VP.ZIndex = 3
-						VP.Parent = Bg
-						table.insert(ThemeListeners, { type = "bg", obj = VP })
-
-						-- ViewportFrame専用カメラ
-						local VPCam = Instance.new("Camera")
-						VPCam.Name = "Camera"
-						VP.CurrentCamera = VPCam
-						VPCam.Parent = VP
-
-						-- WorldModel（アニメーション・物理が正しく動作する）
-						local WorldModel = Instance.new("WorldModel")
-						WorldModel.Name = "WorldModel"
-						WorldModel.Parent = VP
-
-						-- ライティング設定
-						VP.Ambient       = Color3.fromRGB(200, 200, 200)
-						VP.LightColor    = Color3.fromRGB(255, 255, 255)
-						VP.LightDirection = Vector3.new(-1, -1, -1)
-
-						-- 右側: 情報パネル（幅60%）
-						local InfoPanel = Instance.new("Frame")
-						InfoPanel.Size = UDim2.new(0.6, -6, 1, -4)
-						InfoPanel.Position = UDim2.new(0.4, 4, 0, 2)
-						InfoPanel.BackgroundTransparency = 1
-						InfoPanel.BorderSizePixel = 0
-						InfoPanel.ZIndex = 3
-						InfoPanel.Parent = Bg
-
-						local function MakeInfoLabel(yOffset, labelText)
-							local lbl = Instance.new("TextLabel")
-							lbl.Size = UDim2.new(1, 0, 0, 13)
-							lbl.Position = UDim2.fromOffset(2, yOffset)
-							lbl.BackgroundTransparency = 1
-							lbl.BorderSizePixel = 0
-							lbl.Font = Enum.Font.Code
-							lbl.TextSize = 10
-							lbl.TextXAlignment = Enum.TextXAlignment.Left
-							lbl.TextColor3 = C_ACCENT_LT
-							lbl.Text = labelText
-							lbl.ZIndex = 4
-							lbl.Parent = InfoPanel
-							table.insert(ThemeListeners, { type = "text_lt", obj = lbl })
-							return lbl
-						end
-
-						local NameLabel = MakeInfoLabel(4,  "Name: --")
-						local IdLabel   = MakeInfoLabel(19, "ID:   --")
-						local PosLabel  = MakeInfoLabel(34, "Pos:  --")
-
-						-- HPゲージ背景
-						local HPTrack = Instance.new("Frame")
-						HPTrack.Size = UDim2.new(1, -4, 0, 7)
-						HPTrack.Position = UDim2.fromOffset(2, 52)
-						HPTrack.BackgroundColor3 = C_BG
-						HPTrack.BackgroundTransparency = 0.3
-						HPTrack.BorderSizePixel = 0
-						HPTrack.ZIndex = 4
-						HPTrack.Parent = InfoPanel
-						table.insert(ThemeListeners, { type = "track", obj = HPTrack })
-
-						-- HPゲージ塗り
-						local HPFill = Instance.new("Frame")
-						HPFill.Size = UDim2.new(0, 0, 1, 0)
-						HPFill.BackgroundColor3 = C_ACCENT
-						HPFill.BackgroundTransparency = 0
-						HPFill.BorderSizePixel = 0
-						HPFill.ZIndex = 5
-						HPFill.Parent = HPTrack
-						table.insert(ThemeListeners, { type = "fill", obj = HPFill })
-
-						-- HPテキスト
-						local HPLabel = MakeInfoLabel(62, "HP: NaN / NaN")
-
-						-- 内部状態
-						local _renderConn  = nil
-						local _hpConn      = nil
-						local _posConn     = nil
-						local _currentClone = nil
-
-						-- カメラ固定CFrame（正面やや上から見下ろす）
-						local CLONE_ORIGIN = CFrame.new(0, 0, 0)
-						local CAMERA_CF = CFrame.lookAt(
-							Vector3.new(0, 1.5, -8),
-							Vector3.new(0, 1.5, 0)
-						)
-
-						-- Neck Motor6Dを探す
-						local function FindNeckMotor(char)
-							for _, v in ipairs(char:GetDescendants()) do
-								if v:IsA("Motor6D") and v.Name == "Neck" then
-									return v
-								end
-							end
-							return nil
-						end
-
-						-- HP更新
-						local function UpdateHP(hum)
-							if _hpConn then _hpConn:Disconnect() end
-							if not hum then
-								HPLabel.Text = "HP: NaN / NaN"
-								HPFill.Size = UDim2.new(0, 0, 1, 0)
-								return
-							end
-							local function RefreshHP()
-								local ok, hp, maxHp = pcall(function()
-									return hum.Health, hum.MaxHealth
-								end)
-								if ok then
-									local ratio = (maxHp > 0) and (hp / maxHp) or 0
-									HPLabel.Text = string.format("HP: %.0f / %.0f", hp, maxHp)
-									HPFill.Size = UDim2.new(math.clamp(ratio, 0, 1), 0, 1, 0)
-								else
-									HPLabel.Text = "HP: NaN / NaN"
-									HPFill.Size = UDim2.new(0, 0, 1, 0)
-								end
-							end
-							RefreshHP()
-							_hpConn = hum.HealthChanged:Connect(RefreshHP)
-						end
-
-						-- 位置更新
-						local function UpdatePos(rootPart)
-							if _posConn then _posConn:Disconnect() end
-							if not rootPart then
-								PosLabel.Text = "Pos: --"
-								return
-							end
-							local function RefreshPos()
-								local ok, p = pcall(function() return rootPart.Position end)
-								if ok then
-									PosLabel.Text = string.format(
-										"Pos: %.1f, %.1f, %.1f", p.X, p.Y, p.Z
-									)
-								else
-									PosLabel.Text = "Pos: --"
-								end
-							end
-							RefreshPos()
-							_posConn = game:GetService("RunService").Heartbeat:Connect(function()
-								if not rootPart or not rootPart.Parent then
-									_posConn:Disconnect()
-									return
-								end
-								RefreshPos()
-							end)
-						end
-
-						-- クローンのクリーンアップ
-						local function CleanupClone()
-							if _renderConn then _renderConn:Disconnect(); _renderConn = nil end
-							if _currentClone then _currentClone:Destroy(); _currentClone = nil end
-						end
-
-						-- キャラクターをViewportに配置してアニメーション同期を開始
-						local function PlaceModel(targetCharacter)
-							CleanupClone()
-							if not targetCharacter then return end
-
-							-- Archivable設定してクローン作成
-							targetCharacter.Archivable = true
-							local clone = targetCharacter:Clone()
-
-							-- スクリプト類を削除
-							for _, v in ipairs(clone:GetDescendants()) do
-								if v:IsA("Script") or v:IsA("LocalScript") or v:IsA("ModuleScript") then
-									v:Destroy()
-								end
-							end
-
-							clone.Parent = WorldModel
-							_currentClone = clone
-
-							-- カメラ固定
-							VPCam.CFrame = CAMERA_CF
-
-							local targetHumanoid = targetCharacter:WaitForChild("Humanoid", 5)
-							local cloneHumanoid  = clone:WaitForChild("Humanoid", 5)
-							local targetRoot     = targetCharacter:WaitForChild("HumanoidRootPart", 5)
-							local cloneRoot      = clone:WaitForChild("HumanoidRootPart", 5)
-
-							if not (targetHumanoid and cloneHumanoid and targetRoot and cloneRoot) then return end
-
-							-- Neck Motor6D取得
-							local targetNeck = FindNeckMotor(targetCharacter)
-							local cloneNeck  = FindNeckMotor(clone)
-
-							-- Animator取得（なければ作成）
-							local targetAnimator = targetHumanoid:FindFirstChildOfClass("Animator")
-								or Instance.new("Animator", targetHumanoid)
-							local cloneAnimator = cloneHumanoid:FindFirstChildOfClass("Animator")
-								or Instance.new("Animator", cloneHumanoid)
-
-							-- アニメーション同期用テーブル
-							local activeTracks = {}
-
-							_renderConn = game:GetService("RunService").RenderStepped:Connect(function()
-								if not targetCharacter.Parent or not targetRoot.Parent or not cloneRoot.Parent then
-									return
-								end
-
-								-- ① HumanoidRootPart: XZ固定・ヨー角のみ同期
-								local targetRootCF = targetRoot.CFrame
-								local _, targetYaw, _ = targetRootCF:ToEulerAnglesYXZ()
-								cloneRoot.CFrame = CLONE_ORIGIN * CFrame.Angles(0, targetYaw, 0)
-
-								-- ② Neck Transform同期
-								if targetNeck and cloneNeck then
-									cloneNeck.Transform = targetNeck.Transform
-								end
-
-								-- ③ アニメーション同期
-								local playingTracks = targetAnimator:GetPlayingAnimationTracks()
-
-								for _, track in ipairs(playingTracks) do
-									local animId = track.Animation.AnimationId
-									if not activeTracks[animId] then
-										local cloneTrack = cloneAnimator:LoadAnimation(track.Animation)
-										cloneTrack:Play()
-										activeTracks[animId] = cloneTrack
-									end
-									local cTrack = activeTracks[animId]
-									if cTrack then
-										cTrack.TimePosition = track.TimePosition
-										cTrack:AdjustWeight(track.WeightCurrent)
-										cTrack:AdjustSpeed(track.Speed)
-									end
-								end
-
-								-- 停止したトラックの処理
-								for animId, cTrack in pairs(activeTracks) do
-									local isPlaying = false
-									for _, track in ipairs(playingTracks) do
-										if track.Animation.AnimationId == animId then
-											isPlaying = true
-											break
-										end
-									end
-									if not isPlaying then
-										cTrack:Stop()
-										activeTracks[animId] = nil
-									end
-								end
-							end)
-						end
-
-						-- ViewportObject API
-						local vpObj = {}
-
-						function vpObj:SetTarget(target)
-							-- target: Player または Model
-							local model, name, userId, hum, rootPart
-
-							local ok, isPlayer = pcall(function()
-								return target:IsA("Player")
-							end)
-
-							if ok and isPlayer then
-								name   = target.Name
-								userId = tostring(target.UserId)
-								model  = target.Character
-							else
-								name   = target.Name
-								userId = "--"
-								model  = target
-							end
-
-							NameLabel.Text = "Name: " .. (name or "--")
-							IdLabel.Text   = "ID:   " .. (userId or "--")
-
-							if model then
-								PlaceModel(model)
-								hum      = model:FindFirstChildOfClass("Humanoid")
-								rootPart = model:FindFirstChild("HumanoidRootPart")
-										 or model:FindFirstChildWhichIsA("BasePart")
-							end
-
-							UpdateHP(hum)
-							UpdatePos(rootPart)
-						end
-
-						function vpObj:SetCamera(cframe)
-							VPCam.CFrame = cframe
-						end
-
-						function vpObj:GetViewport()
-							return VP
-						end
-
-						function vpObj:Clear()
-							CleanupClone()
-							if _hpConn  then _hpConn:Disconnect();  _hpConn  = nil end
-							if _posConn then _posConn:Disconnect(); _posConn = nil end
-							NameLabel.Text = "Name: --"
-							IdLabel.Text   = "ID:   --"
-							PosLabel.Text  = "Pos:  --"
-							HPLabel.Text   = "HP: NaN / NaN"
-							HPFill.Size    = UDim2.new(0, 0, 1, 0)
-						end
-
-						-- 初期ターゲットがあれば適用
-						if Config.Target then
-							vpObj:SetTarget(Config.Target)
-						end
-
-						return vpObj
-					end
-
-					-- --------------------------------------------------------
-					--  Tab:AddMultiViewport(Config)
-					--  Config: { Height, WindowRef }
-					--  マルチドロップダウンでプレイヤーを複数選択し、
-					--  選択されたプレイヤーごとにViewportを動的生成・削除する
-					-- --------------------------------------------------------
-					function Tab:AddMultiViewport(Config)
-						Config = Config or {}
-						local vpHeight  = Config.Height    or 80
-						local WindowRef = Config.WindowRef  -- Notify用（省略可）
-
-						local PlayersService = game:GetService("Players")
-
-						-- 現在表示中のViewportを管理するテーブル
-						-- { [playerName] = { vpObj, bgFrame, renderConn, hpConn, posConn, clone } }
-						local _activeViewports = {}
-
-						-- ---- 内部: 単一プレイヤー用Viewport生成 ----
-						local function CreatePlayerViewport(player)
-							if _activeViewports[player.Name] then return end  -- 重複防止
-
+						-- ============================================================
+						--  共通内部ヘルパー: 単一ViewportFrameを構築して返す
+						-- ============================================================
+						local function BuildSingleViewport(parentFrame, initName, initId)
 							-- 外枠
 							local Bg = MakeHertaFrame(
-								tabEntry.Page,
-								UDim2.new(1, 0, 0, vpHeight),
+								parentFrame,
+								UDim2.new(1, 0, 0, height),
 								NextOrder()
 							)
 
-							-- ViewportFrame（左40%）
+							-- 左側: ViewportFrame（幅40%）
 							local VP = Instance.new("ViewportFrame")
 							VP.Size = UDim2.new(0.4, -4, 1, -4)
 							VP.Position = UDim2.fromOffset(2, 2)
@@ -3114,8 +2781,8 @@ function HertaIX:CreateWindow(titleText, theme)
 							VP.BackgroundTransparency = 0.3
 							VP.BorderSizePixel = 0
 							VP.ZIndex = 3
-							VP.Ambient       = Color3.fromRGB(200, 200, 200)
-							VP.LightColor    = Color3.fromRGB(255, 255, 255)
+							VP.Ambient        = Color3.fromRGB(200, 200, 200)
+							VP.LightColor     = Color3.fromRGB(255, 255, 255)
 							VP.LightDirection = Vector3.new(-1, -1, -1)
 							VP.Parent = Bg
 							table.insert(ThemeListeners, { type = "bg", obj = VP })
@@ -3129,7 +2796,7 @@ function HertaIX:CreateWindow(titleText, theme)
 							WorldModel.Name = "WorldModel"
 							WorldModel.Parent = VP
 
-							-- 情報パネル（右60%）
+							-- 右側: 情報パネル（幅60%）
 							local InfoPanel = Instance.new("Frame")
 							InfoPanel.Size = UDim2.new(0.6, -6, 1, -4)
 							InfoPanel.Position = UDim2.new(0.4, 4, 0, 2)
@@ -3138,26 +2805,26 @@ function HertaIX:CreateWindow(titleText, theme)
 							InfoPanel.ZIndex = 3
 							InfoPanel.Parent = Bg
 
-							local function MakeInfoLbl(yOff, txt)
+							local function MakeInfoLabel(yOffset, labelText)
 								local lbl = Instance.new("TextLabel")
 								lbl.Size = UDim2.new(1, 0, 0, 13)
-								lbl.Position = UDim2.fromOffset(2, yOff)
+								lbl.Position = UDim2.fromOffset(2, yOffset)
 								lbl.BackgroundTransparency = 1
 								lbl.BorderSizePixel = 0
 								lbl.Font = Enum.Font.Code
 								lbl.TextSize = 10
 								lbl.TextXAlignment = Enum.TextXAlignment.Left
 								lbl.TextColor3 = C_ACCENT_LT
-								lbl.Text = txt
+								lbl.Text = labelText
 								lbl.ZIndex = 4
 								lbl.Parent = InfoPanel
 								table.insert(ThemeListeners, { type = "text_lt", obj = lbl })
 								return lbl
 							end
 
-							local NameLabel = MakeInfoLbl(4,  "Name: " .. player.Name)
-							local IdLabel   = MakeInfoLbl(19, "ID:   " .. tostring(player.UserId))
-							local PosLabel  = MakeInfoLbl(34, "Pos:  --")
+							local NameLabel = MakeInfoLabel(4,  "Name: " .. (initName or "--"))
+							local IdLabel   = MakeInfoLabel(19, "ID:   " .. (initId   or "--"))
+							local PosLabel  = MakeInfoLabel(34, "Pos:  --")
 
 							local HPTrack = Instance.new("Frame")
 							HPTrack.Size = UDim2.new(1, -4, 0, 7)
@@ -3178,12 +2845,12 @@ function HertaIX:CreateWindow(titleText, theme)
 							HPFill.Parent = HPTrack
 							table.insert(ThemeListeners, { type = "fill", obj = HPFill })
 
-							local HPLabel = MakeInfoLbl(62, "HP: NaN / NaN")
+							local HPLabel = MakeInfoLabel(62, "HP: NaN / NaN")
 
 							-- 接続管理
-							local _renderConn = nil
-							local _hpConn     = nil
-							local _posConn    = nil
+							local _renderConn  = nil
+							local _hpConn      = nil
+							local _posConn     = nil
 							local _currentClone = nil
 
 							local CLONE_ORIGIN = CFrame.new(0, 0, 0)
@@ -3308,43 +2975,91 @@ function HertaIX:CreateWindow(titleText, theme)
 								end)
 							end
 
-							-- キャラクターが存在すれば即時表示、なければ CharacterAdded を待つ
-							local char = player.Character
-							if char then
-								PlaceModel(char)
-								local hum      = char:FindFirstChildOfClass("Humanoid")
-								local rootPart = char:FindFirstChild("HumanoidRootPart")
-												 or char:FindFirstChildWhichIsA("BasePart")
+							-- 単一Viewportオブジェクト
+							local vpObj = {}
+
+							function vpObj:SetTarget(target)
+								local model, name, userId, hum, rootPart
+								local ok, isPlayer = pcall(function() return target:IsA("Player") end)
+								if ok and isPlayer then
+									name   = target.Name
+									userId = tostring(target.UserId)
+									model  = target.Character
+								else
+									name   = target.Name
+									userId = "--"
+									model  = target
+								end
+								NameLabel.Text = "Name: " .. (name or "--")
+								IdLabel.Text   = "ID:   " .. (userId or "--")
+								if model then
+									PlaceModel(model)
+									hum      = model:FindFirstChildOfClass("Humanoid")
+									rootPart = model:FindFirstChild("HumanoidRootPart")
+											 or model:FindFirstChildWhichIsA("BasePart")
+								end
 								UpdateHP(hum)
 								UpdatePos(rootPart)
-							else
-								player.CharacterAdded:Once(function(newChar)
-									PlaceModel(newChar)
-									local hum      = newChar:FindFirstChildOfClass("Humanoid")
-									local rootPart = newChar:FindFirstChild("HumanoidRootPart")
-													 or newChar:FindFirstChildWhichIsA("BasePart")
-									UpdateHP(hum)
-									UpdatePos(rootPart)
-								end)
 							end
 
-							-- 管理テーブルに登録
-							_activeViewports[player.Name] = {
-								bg          = Bg,
-								cleanup     = function()
-									CleanupClone()
-									if _hpConn  then _hpConn:Disconnect();  _hpConn  = nil end
-									if _posConn then _posConn:Disconnect(); _posConn = nil end
-									Bg:Destroy()
-								end,
-							}
+							function vpObj:SetCamera(cframe)
+								VPCam.CFrame = cframe
+							end
+
+							function vpObj:GetViewport()
+								return VP
+							end
+
+							function vpObj:Clear()
+								CleanupClone()
+								if _hpConn  then _hpConn:Disconnect();  _hpConn  = nil end
+								if _posConn then _posConn:Disconnect(); _posConn = nil end
+								NameLabel.Text = "Name: --"
+								IdLabel.Text   = "ID:   --"
+								PosLabel.Text  = "Pos:  --"
+								HPLabel.Text   = "HP: NaN / NaN"
+								HPFill.Size    = UDim2.new(0, 0, 1, 0)
+							end
+
+							vpObj._cleanup = function()
+								CleanupClone()
+								if _hpConn  then _hpConn:Disconnect();  _hpConn  = nil end
+								if _posConn then _posConn:Disconnect(); _posConn = nil end
+								Bg:Destroy()
+							end
+
+							return vpObj
 						end
 
-						-- ---- 内部: Viewport削除 ----
+						-- ============================================================
+						--  MultiPlayer = false: 従来の単一Viewport
+						-- ============================================================
+						if not multiPlayer then
+							local vpObj = BuildSingleViewport(tabEntry.Page, nil, nil)
+							if Config.Target then
+								vpObj:SetTarget(Config.Target)
+							end
+							return vpObj
+						end
+
+						-- ============================================================
+						--  MultiPlayer = true: MultiDropdownで複数プレイヤーを管理
+						-- ============================================================
+						local PlayersService = game:GetService("Players")
+						local _activeViewports = {}  -- { [playerName] = vpObj }
+
+						local function GetPlayerNames()
+							local names = {}
+							for _, p in ipairs(PlayersService:GetPlayers()) do
+								table.insert(names, p.Name)
+							end
+							return names
+						end
+
 						local function RemovePlayerViewport(playerName, reason)
 							local entry = _activeViewports[playerName]
 							if not entry then return end
-							entry.cleanup()
+							entry._cleanup()
 							_activeViewports[playerName] = nil
 							if WindowRef then
 								WindowRef:Notify(
@@ -3355,18 +3070,28 @@ function HertaIX:CreateWindow(titleText, theme)
 							end
 						end
 
-						-- ---- プレイヤー名リスト取得 ----
-						local function GetPlayerNames()
-							local names = {}
-							for _, p in ipairs(PlayersService:GetPlayers()) do
-								table.insert(names, p.Name)
+						local function CreatePlayerViewport(player)
+							if _activeViewports[player.Name] then return end
+							local vpObj = BuildSingleViewport(
+								tabEntry.Page,
+								player.Name,
+								tostring(player.UserId)
+							)
+							-- キャラクターが存在すれば即表示、なければ待機
+							local char = player.Character
+							if char then
+								vpObj:SetTarget(player)
+							else
+								player.CharacterAdded:Once(function()
+									vpObj:SetTarget(player)
+								end)
 							end
-							return names
+							_activeViewports[player.Name] = vpObj
 						end
 
-						-- ---- MultiDropdown ----
+						-- MultiDropdown
 						local dd = Tab:AddMultiDropdown("プレイヤー選択", GetPlayerNames(), function(selected)
-							-- 選択リストに追加されたプレイヤーのViewportを生成
+							-- 新規選択 → Viewport生成
 							local selectedSet = {}
 							for _, name in ipairs(selected) do
 								selectedSet[name] = true
@@ -3375,7 +3100,7 @@ function HertaIX:CreateWindow(titleText, theme)
 									if p then CreatePlayerViewport(p) end
 								end
 							end
-							-- 選択解除されたプレイヤーのViewportを削除
+							-- 選択解除 → Viewport削除
 							for name in pairs(_activeViewports) do
 								if not selectedSet[name] then
 									RemovePlayerViewport(name, "選択解除")
@@ -3383,35 +3108,29 @@ function HertaIX:CreateWindow(titleText, theme)
 							end
 						end)
 
-						-- ---- プレイヤー入退室の自動更新 ----
-						PlayersService.PlayerAdded:Connect(function(p)
+						-- プレイヤー入退室の自動更新
+						PlayersService.PlayerAdded:Connect(function()
 							dd:Refresh(GetPlayerNames())
 						end)
 
 						PlayersService.PlayerRemoving:Connect(function(p)
-							-- 退出プレイヤーのViewportを削除（通知付き）
 							if _activeViewports[p.Name] then
 								RemovePlayerViewport(p.Name, "退出")
 							end
-							-- ドロップダウンのリストを更新（退出プレイヤーを除外）
-							local newNames = GetPlayerNames()
-							dd:Refresh(newNames)
+							dd:Refresh(GetPlayerNames())
 						end)
 
-						-- 返却オブジェクト
+						-- 返却オブジェクト（MultiPlayer版）
 						local mvObj = {}
 
 						function mvObj:GetActiveViewports()
 							local result = {}
-							for name, entry in pairs(_activeViewports) do
-								result[name] = entry
-							end
+							for name, entry in pairs(_activeViewports) do result[name] = entry end
 							return result
 						end
 
 						function mvObj:RemoveViewport(playerName)
 							RemovePlayerViewport(playerName, "手動削除")
-							-- ドロップダウンの選択状態も解除
 							local cur = dd:Get()
 							local newSel = {}
 							for _, n in ipairs(cur) do
@@ -3430,9 +3149,6 @@ function HertaIX:CreateWindow(titleText, theme)
 						return mvObj
 					end
 
-					-- --------------------------------------------------------
-					--  Tab:AddParagraph(titleText, descText)
-				-- --------------------------------------------------------
 				function Tab:AddParagraph(pTitle, descText)
 
 			local Bg = Instance.new("Frame")
