@@ -617,7 +617,8 @@ function HertaIX:CreateWindow(titleText, theme)
 	TitleLabel.TextXAlignment = Enum.TextXAlignment.Left
 	TitleLabel.ZIndex = 10
 	TitleLabel.Parent = Main
-	table.insert(ThemeListeners, { type = "text_main", obj = TitleLabel })
+	-- TitleLabel は text_main に登録せず、タイトル専用の状態で管理する
+	-- （虹色・フォント切り替えのため ThemeListeners から分離）
 
 	-- タイトル左側アイコン
 	local HeaderIcon = Instance.new("ImageLabel")
@@ -1090,12 +1091,79 @@ function HertaIX:CreateWindow(titleText, theme)
 	Window._ActiveTab   = nil
 	Window._TabOffset   = 0
 
+	-- タイトル専用状態
+	local _titleRainbow  = false   -- 虹色モードON/OFF
+	local _titleRainbowConn = nil  -- 虹色スレッド停止用フラグ
+	local _titleRainbowActive = false
+
+	-- タイトルフォントマップ
+	local _TitleFontMap = {
+		normal = Enum.Font.Code,
+		scifi  = Enum.Font.SciFi,
+		arcade = Enum.Font.Arcade,
+	}
+	local _titleFont = "normal"  -- 現在のフォントキー
+
+	-- タイトルの色をテーマに合わせてリセットする内部関数
+	local function _ResetTitleColor()
+		if TitleLabel and TitleLabel.Parent then
+			TitleLabel.TextColor3 = C_TEXT
+		end
+	end
+
 	-- ----------------------------------------------------------
 	--  Window:ApplyTheme(name)
 	--  実行時にテーマを切り替える（複数ウィンドウ安全）
 	-- ----------------------------------------------------------
 	function Window:ApplyTheme(name)
 		ApplyTheme(name)
+		-- rainbow テーマ以外の場合、タイトル虹色が有効なら継続
+		-- rainbow テーマの場合はタイトル虹色を無効化（全体が虹色になるため）
+		local T = Themes[name]
+		if T and T.rainbow then
+			_titleRainbowActive = false
+			_ResetTitleColor()
+		elseif _titleRainbow then
+			-- 虹色モードが設定されていれば再起動
+			self:SetTitleRainbow(true)
+		end
+	end
+
+	-- ----------------------------------------------------------
+	--  Window:SetTitleRainbow(enabled)
+	--  タイトル文字を虹色サイクルさせる（rainbowテーマ時は無視）
+	-- ----------------------------------------------------------
+	function Window:SetTitleRainbow(enabled)
+		_titleRainbow = enabled
+		-- rainbow テーマが有効な場合は何もしない
+		if _RainbowActive then return end
+		if enabled then
+			_titleRainbowActive = true
+			task.spawn(function()
+				while _titleRainbowActive and TitleLabel and TitleLabel.Parent do
+					local hue = (tick() * 0.3) % 1
+					TitleLabel.TextColor3 = Color3.fromHSV(hue, 1, 1)
+					task.wait(0.03)
+				end
+			end)
+		else
+			_titleRainbowActive = false
+			_ResetTitleColor()
+		end
+	end
+
+	-- ----------------------------------------------------------
+	--  Window:SetTitleFont(fontName)
+	--  タイトルのフォントを切り替える
+	--  fontName: "normal" | "scifi" | "arcade"
+	-- ----------------------------------------------------------
+	function Window:SetTitleFont(fontName)
+		local f = _TitleFontMap[fontName]
+		if not f then return end
+		_titleFont = fontName
+		if TitleLabel and TitleLabel.Parent then
+			TitleLabel.Font = f
+		end
 	end
 
 	local function SwitchTab(target)
@@ -3337,6 +3405,123 @@ function HertaIX:CreateWindow(titleText, theme)
 			-- 残りの通知を下方に詳める
 			_RealignNotifications()
 		end)
+	end
+
+	-- ----------------------------------------------------------
+	--  Window:NotifyImportant(title, message)
+	--  重要通知：赤色固定・ OK ボタンで手動消去
+	-- ----------------------------------------------------------
+	local IMPORTANT_W      = 200
+	local IMPORTANT_H      = 64
+	local _ImportantStack  = {}
+
+	local function _RealignImportant()
+		local count = #_ImportantStack
+		for i, entry in ipairs(_ImportantStack) do
+			local slot = count - i
+			local targetY = -(IMPORTANT_H + NOTIFY_GAP) * slot - IMPORTANT_H - NOTIFY_BOTTOM
+			TweenService:Create(
+				entry.frame,
+				TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+				{ Position = UDim2.new(0, NOTIFY_RIGHT, 1, targetY) }
+			):Play()
+		end
+	end
+
+	function Window:NotifyImportant(title, message)
+		local RED_BG     = Color3.fromRGB(60,  8,   8)
+		local RED_ACCENT = Color3.fromRGB(220, 50,  50)
+		local RED_LT     = Color3.fromRGB(255, 120, 120)
+		local RED_MID    = Color3.fromRGB(200, 80,  80)
+
+		local Frame = Instance.new("Frame")
+		Frame.Size = UDim2.fromOffset(IMPORTANT_W, IMPORTANT_H)
+		Frame.Position = UDim2.new(0, -IMPORTANT_W, 1, -NOTIFY_BOTTOM)
+		Frame.BackgroundColor3 = RED_BG
+		Frame.BackgroundTransparency = 0.2
+		Frame.BorderSizePixel = 0
+		Frame.Parent = self._ScreenGui
+
+		local Corner = Instance.new("UICorner")
+		Corner.CornerRadius = UDim.new(0, 6)
+		Corner.Parent = Frame
+
+		local Stroke = Instance.new("UIStroke")
+		Stroke.Color = RED_ACCENT
+		Stroke.Thickness = 1.5
+		Stroke.Parent = Frame
+
+		local TopLine = Instance.new("Frame")
+		TopLine.Size = UDim2.new(1, 0, 0, 2)
+		TopLine.BorderSizePixel = 0
+		TopLine.BackgroundColor3 = RED_ACCENT
+		TopLine.Parent = Frame
+
+		local TitleLbl = Instance.new("TextLabel")
+		TitleLbl.Size = UDim2.new(1, -14, 0, 18)
+		TitleLbl.Position = UDim2.fromOffset(7, 4)
+		TitleLbl.BackgroundTransparency = 1
+		TitleLbl.Text = "⚠ " .. (title or "")
+		TitleLbl.Font = Enum.Font.GothamBold
+		TitleLbl.TextSize = 11
+		TitleLbl.TextXAlignment = Enum.TextXAlignment.Left
+		TitleLbl.TextColor3 = RED_LT
+		TitleLbl.Parent = Frame
+
+		local MsgLbl = Instance.new("TextLabel")
+		MsgLbl.Size = UDim2.new(1, -14, 0, 22)
+		MsgLbl.Position = UDim2.fromOffset(7, 23)
+		MsgLbl.BackgroundTransparency = 1
+		MsgLbl.Text = message or ""
+		MsgLbl.Font = Enum.Font.Code
+		MsgLbl.TextSize = 9
+		MsgLbl.TextXAlignment = Enum.TextXAlignment.Left
+		MsgLbl.TextWrapped = true
+		MsgLbl.TextColor3 = RED_MID
+		MsgLbl.Parent = Frame
+
+		-- OK ボタン（右下小さめ）
+		local OKBtn = Instance.new("TextButton")
+		OKBtn.Size = UDim2.fromOffset(28, 14)
+		OKBtn.AnchorPoint = Vector2.new(1, 1)
+		OKBtn.Position = UDim2.new(1, -6, 1, -5)
+		OKBtn.BackgroundColor3 = RED_ACCENT
+		OKBtn.BackgroundTransparency = 0.3
+		OKBtn.BorderSizePixel = 0
+		OKBtn.Text = "ok"
+		OKBtn.Font = Enum.Font.Code
+		OKBtn.TextSize = 9
+		OKBtn.TextColor3 = RED_LT
+		OKBtn.ZIndex = 2
+		OKBtn.Parent = Frame
+
+		local OKCorner = Instance.new("UICorner")
+		OKCorner.CornerRadius = UDim.new(0, 3)
+		OKCorner.Parent = OKBtn
+
+		-- スタック登録・整列
+		local entry = { frame = Frame }
+		table.insert(_ImportantStack, entry)
+		_RealignImportant()
+
+		local function Dismiss()
+			local curPos = Frame.Position
+			local T = TweenService:Create(
+				Frame,
+				TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
+				{ Position = UDim2.new(0, -IMPORTANT_W, curPos.Y.Scale, curPos.Y.Offset) }
+			)
+			T:Play()
+			T.Completed:Connect(function()
+				for i, e in ipairs(_ImportantStack) do
+					if e == entry then table.remove(_ImportantStack, i); break end
+				end
+				if Frame then Frame:Destroy() end
+				_RealignImportant()
+				end)
+		end
+
+		OKBtn.MouseButton1Click:Connect(Dismiss)
 	end
 
 	-- 初期ロード時の開くアニメーション
