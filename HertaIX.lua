@@ -323,6 +323,113 @@ local MakeBgFrame = MakeHertaFrame
 local HertaIX = {}
 HertaIX.__index = HertaIX
 
+-- ============================================================
+--  共通コンポーネント管理ヘルパー
+--  全コンポーネントへ表示・操作・破棄・Callback APIを付与する。
+-- ============================================================
+local function _AttachComponentManagement(component, root, window, componentId, componentType, hooks)
+	hooks = hooks or {}
+	local state = {
+		visible = root.Visible,
+		enabled = true,
+		destroyed = false,
+		callback = hooks.callback,
+	}
+
+	component.Object = component.Object or root
+	component.Id = componentId and tostring(componentId) or nil
+	component.Type = componentType or "Component"
+	component._Root = root
+	component._Window = window
+	component._ClosePopup = hooks.closePopup
+
+	-- 操作不能状態を明確に示し、背面のGUI操作をブロックするオーバーレイ
+	local DisabledOverlay = Instance.new("TextButton")
+	DisabledOverlay.Name = "HertaIXDisabledOverlay"
+	DisabledOverlay.Size = UDim2.fromScale(1, 1)
+	DisabledOverlay.Position = UDim2.fromScale(0, 0)
+	DisabledOverlay.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+	DisabledOverlay.BackgroundTransparency = 0.50
+	DisabledOverlay.BorderSizePixel = 0
+	DisabledOverlay.Text = ""
+	DisabledOverlay.AutoButtonColor = false
+	DisabledOverlay.Active = true
+	DisabledOverlay.Visible = false
+	DisabledOverlay.ZIndex = 1000
+	DisabledOverlay.Parent = root
+
+	function component:SetVisible(visible)
+		if state.destroyed then return false end
+		state.visible = visible == true
+		root.Visible = state.visible
+		if hooks.setVisible then hooks.setVisible(state.visible) end
+		return state.visible
+	end
+
+	function component:IsVisible()
+		return (not state.destroyed) and state.visible
+	end
+
+	function component:SetEnabled(enabled)
+		if state.destroyed then return false end
+		state.enabled = enabled == true
+		DisabledOverlay.Visible = not state.enabled
+		if hooks.setEnabled then hooks.setEnabled(state.enabled) end
+		return state.enabled
+	end
+
+	function component:IsEnabled()
+		return (not state.destroyed) and state.enabled
+	end
+
+	function component:SetCallback(fn)
+		if state.destroyed then return false end
+		if fn ~= nil and type(fn) ~= "function" then
+			error("HertaIX: SetCallback expects a function or nil", 2)
+		end
+		state.callback = fn
+		if hooks.setCallback then hooks.setCallback(fn) end
+		return true
+	end
+
+	function component:GetCallback()
+		if hooks.getCallback then return hooks.getCallback() end
+		return state.callback
+	end
+
+	function component:Fire(...)
+		if state.destroyed then return false end
+		local fn = hooks.getCallback and hooks.getCallback() or state.callback
+		if type(fn) == "function" then
+			fn(...)
+			return true
+		end
+		return false
+	end
+
+	function component:Destroy()
+		if state.destroyed then return false end
+		state.destroyed = true
+			if hooks.closePopup then hooks.closePopup() end
+			if hooks.cleanup then hooks.cleanup() end
+
+		if window and window._UnregisterComponent then
+			window:_UnregisterComponent(self)
+		end
+		if root and root.Parent then root:Destroy() end
+		return true
+	end
+
+	function component:IsDestroyed()
+		return state.destroyed
+	end
+
+	if window and window._RegisterComponent then
+		window:_RegisterComponent(component, component.Id)
+	end
+	return component
+end
+
 -- ------------------------------------------------------------
 --  CreateWindow(titleText)
 -- ------------------------------------------------------------
@@ -832,9 +939,11 @@ function HertaIX:CreateWindow(titleText, theme)
 			Main.AnchorPoint = Vector2.new(0.5, 0)
 			Main.Position = UDim2.new(0, centerX, 0, topY)
 			-- コンテンツを即座に隠す（ClipsDescendants=falseでもはみ出さないように）
-			ContentArea.Visible = false
-			TabBar.Visible = false
-			TweenService:Create(
+				ContentArea.Visible = false
+				TabBar.Visible = false
+				ResizeHandle.Visible = false
+				TweenService:Create(
+
 				Main,
 				TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
 				{ Size = UDim2.new(FullSize.X.Scale, FullSize.X.Offset, 0, 37) }
@@ -847,9 +956,11 @@ function HertaIX:CreateWindow(titleText, theme)
 			):Play()
 			-- 展開完了後にコンテンツを再表示
 			task.delay(0.21, function()
-				ContentArea.Visible = true
-				TabBar.Visible = true
-			end)
+					ContentArea.Visible = true
+					TabBar.Visible = true
+					ResizeHandle.Visible = Resizable
+				end)
+
 		end
 	end)
 
@@ -929,14 +1040,20 @@ function HertaIX:CreateWindow(titleText, theme)
 	MBAccent.Parent = MiniBar
 	table.insert(ThemeListeners, { type = "headerline", obj = MBAccent })
 
-	-- CRTアニメーション共通関数
-	local OriginalSize = Main.Size
+		-- CRTアニメーション共通関数
+		-- 以下はCRT関数からも参照するため、先に同一スコープで宣言する。
+		local Draggable = true
+		local Resizable = true
+		local ResizeHandle = nil
+		local OriginalSize = Main.Size
+
 
 	-- アニメ中に非表示にする子要素一覧
-	local _CRTHideList = {
-		ContentArea, TabBar, HeaderLine,
-		DragHandle, Minimize, Close, ByLabel, TitleLabel, Cursor
-	}
+		local _CRTHideList = {
+			ContentArea, TabBar, HeaderLine, DragLine,
+			DragHandle, Minimize, Close, ByLabel, TitleLabel, Cursor
+		}
+
 
 	local function _CRTHideChildren()
 		for _, obj in ipairs(_CRTHideList) do
@@ -944,11 +1061,17 @@ function HertaIX:CreateWindow(titleText, theme)
 		end
 	end
 
-	local function _CRTShowChildren()
-		for _, obj in ipairs(_CRTHideList) do
-			if obj and obj.Parent then obj.Visible = true end
+		local function _CRTShowChildren()
+			for _, obj in ipairs(_CRTHideList) do
+				if obj and obj.Parent then obj.Visible = true end
+			end
+			DragHandle.Visible = Draggable
+			DragLine.Visible = Draggable
+			if ResizeHandle and ResizeHandle.Parent then
+				ResizeHandle.Visible = Resizable
+			end
 		end
-	end
+
 
 	local function CRTTween(obj, time, props)
 		local t = TweenService:Create(
@@ -1045,12 +1168,16 @@ function HertaIX:CreateWindow(titleText, theme)
 	Close.MouseButton1Click:Connect(ShowMiniBar)
 	MiniBar.MouseButton1Click:Connect(HideMiniBar)
 
-	-- ドラッグ（DragHandleボDragLineを押している間のみ可能）
-	local Dragging = false
-	local DragStart, StartPos
+		-- ドラッグ（DragHandle・DragLineを押している間のみ可能）
+		Draggable = true
+		local Dragging = false
+		local DragStart, StartPos
+		local DragInputChangedConn = nil
 
-	local function StartDrag(Input)
-		if Input.UserInputType == Enum.UserInputType.MouseButton1
+		local function StartDrag(Input)
+			if not Draggable then return end
+			if Input.UserInputType == Enum.UserInputType.MouseButton1
+
 		or Input.UserInputType == Enum.UserInputType.Touch then
 			Dragging = true
 			DragStart = Input.Position
@@ -1066,8 +1193,9 @@ function HertaIX:CreateWindow(titleText, theme)
 	DragHandle.InputBegan:Connect(StartDrag)
 	DragLine.InputBegan:Connect(StartDrag)
 
-	UserInputService.InputChanged:Connect(function(Input)
-		if Dragging and (
+		DragInputChangedConn = UserInputService.InputChanged:Connect(function(Input)
+			if Dragging and (
+
 			Input.UserInputType == Enum.UserInputType.MouseMovement
 			or Input.UserInputType == Enum.UserInputType.Touch
 		) then
@@ -1079,19 +1207,123 @@ function HertaIX:CreateWindow(titleText, theme)
 		end
 	end)
 
-	-- ============================================================
-	--  Window オブジェクト
-	-- ============================================================
-	local Window = {}
+		-- リサイズハンドル（右下）。最小化時とSetResizable(false)時は非表示。
+		ResizeHandle = Instance.new("TextButton")
+		ResizeHandle.Name = "ResizeHandle"
+		ResizeHandle.Size = UDim2.fromOffset(16, 16)
+		ResizeHandle.AnchorPoint = Vector2.new(1, 1)
+		ResizeHandle.Position = UDim2.new(1, -5, 1, -5)
+		ResizeHandle.BackgroundTransparency = 1
+		ResizeHandle.BorderSizePixel = 0
+		ResizeHandle.Text = "◢"
+		ResizeHandle.Font = Enum.Font.Code
+		ResizeHandle.TextSize = 13
+		ResizeHandle.TextColor3 = C_ACCENT_LT
+		ResizeHandle.ZIndex = 20
+		ResizeHandle.Parent = Main
+		table.insert(ThemeListeners, { type = "text_lt", obj = ResizeHandle })
+		table.insert(_CRTHideList, ResizeHandle)
+
+		Resizable = true
+		local Resizing = false
+		local ResizeStart, ResizeStartSize
+		local ResizeInputChangedConn = nil
+		local MIN_WIDTH, MIN_HEIGHT = 280, 180
+		local MAX_WIDTH, MAX_HEIGHT = 900, 700
+
+		ResizeHandle.InputBegan:Connect(function(Input)
+			if not Resizable or Minimized then return end
+			if Input.UserInputType == Enum.UserInputType.MouseButton1
+				or Input.UserInputType == Enum.UserInputType.Touch then
+				Resizing = true
+				ResizeStart = Input.Position
+				ResizeStartSize = Main.AbsoluteSize
+				Input.Changed:Connect(function()
+					if Input.UserInputState == Enum.UserInputState.End then
+						Resizing = false
+					end
+				end)
+			end
+		end)
+
+		ResizeInputChangedConn = UserInputService.InputChanged:Connect(function(Input)
+			if not Resizing then return end
+			if Input.UserInputType ~= Enum.UserInputType.MouseMovement
+				and Input.UserInputType ~= Enum.UserInputType.Touch then return end
+			local delta = Input.Position - ResizeStart
+			local width = math.clamp(ResizeStartSize.X + delta.X, MIN_WIDTH, MAX_WIDTH)
+			local height = math.clamp(ResizeStartSize.Y + delta.Y, MIN_HEIGHT, MAX_HEIGHT)
+			local size = UDim2.fromOffset(width, height)
+			FullSize = size
+			OriginalSize = size
+			Main.Size = size
+		end)
+
+		-- ============================================================
+		--  Window オブジェクト
+		-- ============================================================
+		local Window = {}
+
 	Window._ScreenGui   = ScreenGui
 	Window._Main        = Main
 	Window._TabBar      = TabBar
 	Window._ContentArea = ContentArea
 	Window._Tabs        = {}
 	Window._ActiveTab   = nil
-	Window._TabOffset   = 0
+		Window._TabOffset   = 0
+		Window._TabsByName  = {}
+		Window._Components  = {}
+		Window._ComponentsById = {}
+		Window._Destroyed   = false
 
-	-- タイトル専用状態
+		function Window:_RegisterComponent(component, componentId)
+			if self._Destroyed then error("HertaIX: cannot add a component to a destroyed window", 2) end
+			if componentId then
+				componentId = tostring(componentId)
+				if self._ComponentsById[componentId] then
+					error("HertaIX: duplicate component Id '" .. componentId .. "'", 3)
+				end
+				self._ComponentsById[componentId] = component
+				component.Id = componentId
+			end
+			table.insert(self._Components, component)
+		end
+
+		function Window:_UnregisterComponent(component)
+			if component.Id and self._ComponentsById[component.Id] == component then
+				self._ComponentsById[component.Id] = nil
+			end
+			for i = #self._Components, 1, -1 do
+				if self._Components[i] == component then table.remove(self._Components, i) end
+			end
+		end
+
+		function Window:_ReassignComponentId(component, componentId)
+			if not componentId then return end
+			componentId = tostring(componentId)
+			local existing = self._ComponentsById[componentId]
+			if existing and existing ~= component then
+				error("HertaIX: duplicate component Id '" .. componentId .. "'", 2)
+			end
+			if component.Id and self._ComponentsById[component.Id] == component then
+				self._ComponentsById[component.Id] = nil
+			end
+			component.Id = componentId
+			self._ComponentsById[componentId] = component
+		end
+
+		function Window:GetComponent(componentId)
+			return self._ComponentsById[tostring(componentId)]
+		end
+
+		function Window:GetComponents()
+			local result = {}
+			for _, component in ipairs(self._Components) do table.insert(result, component) end
+			return result
+		end
+
+		-- タイトル専用状態
+
 	local _titleRainbow  = false   -- 虹色モードON/OFF
 	local _titleRainbowConn = nil  -- 虹色スレッド停止用フラグ
 	local _titleRainbowActive = false
@@ -1111,8 +1343,107 @@ function HertaIX:CreateWindow(titleText, theme)
 		end
 	end
 
-	-- ----------------------------------------------------------
-	--  Window:ApplyTheme(name)
+		-- ----------------------------------------------------------
+		--  Window configuration and lifecycle API
+		-- ----------------------------------------------------------
+		function Window:SetSize(size)
+			if self._Destroyed then return false end
+			if typeof(size) == "Vector2" then size = UDim2.fromOffset(size.X, size.Y) end
+			if typeof(size) ~= "UDim2" then
+				error("HertaIX: SetSize expects UDim2 or Vector2", 2)
+			end
+			if size.X.Scale == 0 and size.X.Offset < MIN_WIDTH then
+				size = UDim2.new(0, MIN_WIDTH, size.Y.Scale, size.Y.Offset)
+			end
+			if size.Y.Scale == 0 and size.Y.Offset < MIN_HEIGHT then
+				size = UDim2.new(size.X.Scale, size.X.Offset, 0, MIN_HEIGHT)
+			end
+			FullSize = size
+			OriginalSize = size
+			if Minimized then
+				Main.Size = UDim2.new(size.X.Scale, size.X.Offset, 0, 37)
+			else
+				Main.Size = size
+			end
+			return size
+		end
+
+		function Window:GetSize()
+			return FullSize
+		end
+
+		function Window:SetPosition(position)
+			if self._Destroyed then return false end
+			if typeof(position) == "Vector2" then position = UDim2.fromOffset(position.X, position.Y) end
+			if typeof(position) ~= "UDim2" then
+				error("HertaIX: SetPosition expects UDim2 or Vector2", 2)
+			end
+			Main.Position = position
+			return position
+		end
+
+		function Window:GetPosition()
+			return Main.Position
+		end
+
+		function Window:SetDraggable(enabled)
+			if self._Destroyed then return false end
+			Draggable = enabled == true
+			if not Draggable then Dragging = false end
+			DragHandle.Visible = Draggable and Main.Visible and not Minimized
+			DragLine.Visible = Draggable and Main.Visible and not Minimized
+			return Draggable
+		end
+
+		function Window:IsDraggable()
+			return (not self._Destroyed) and Draggable
+		end
+
+		function Window:SetResizable(enabled)
+			if self._Destroyed then return false end
+			Resizable = enabled == true
+			if not Resizable then Resizing = false end
+			ResizeHandle.Visible = Resizable and Main.Visible and not Minimized
+			return Resizable
+		end
+
+		function Window:IsResizable()
+			return (not self._Destroyed) and Resizable
+		end
+
+		function Window:GetState()
+			if self._Destroyed or not ScreenGui.Parent then return "destroyed" end
+			if not Main.Visible then return "closed" end
+			if Minimized then return "minimized" end
+			return "open"
+		end
+
+		function Window:IsOpen()
+			return self:GetState() == "open"
+		end
+
+		function Window:Destroy()
+			if self._Destroyed then return false end
+			self._Destroyed = true
+			_titleRainbowActive = false
+			Dragging = false
+			Resizing = false
+			if DragInputChangedConn then DragInputChangedConn:Disconnect(); DragInputChangedConn = nil end
+			if ResizeInputChangedConn then ResizeInputChangedConn:Disconnect(); ResizeInputChangedConn = nil end
+			local snapshot = {}
+			for _, component in ipairs(self._Components) do table.insert(snapshot, component) end
+			for _, component in ipairs(snapshot) do
+				if component and component.Destroy then component:Destroy() end
+			end
+			self._Components = {}
+			self._ComponentsById = {}
+			if ScreenGui and ScreenGui.Parent then ScreenGui:Destroy() end
+			return true
+		end
+
+		-- ----------------------------------------------------------
+		--  Window:ApplyTheme(name)
+
 	--  実行時にテーマを切り替える（複数ウィンドウ安全）
 	-- ----------------------------------------------------------
 	function Window:ApplyTheme(name)
@@ -1166,24 +1497,58 @@ function HertaIX:CreateWindow(titleText, theme)
 		end
 	end
 
-	local function SwitchTab(target)
-		for _, t in ipairs(Window._Tabs) do
-			local active = (t == target)
-			t.Page.Visible = active
-			t.Underline.Visible = active
-			if t.Status then
-				t.Status.Text = active and "Selected" or ""
+		local function SwitchTab(target)
+			if not target or target.Hidden then return false end
+			for _, t in ipairs(Window._Tabs) do
+				local active = (t == target) and not t.Hidden
+				if not active then
+					for _, component in ipairs(Window._Components) do
+						local root = component and component._Root
+						if root and root.Parent and root:IsDescendantOf(t.Page) and component._ClosePopup then
+							component._ClosePopup()
+						end
+					end
+				end
+				t.Page.Visible = active
+				t.Underline.Visible = active
+				if t.Status then
+					t.Status.Text = active and "Selected" or ""
+				end
 			end
+			Window._ActiveTab = target
+			return true
 		end
-		Window._ActiveTab = target
-	end
+
+		function Window:SelectTab(tabOrName)
+			if self._Destroyed then return false end
+			local target
+			if type(tabOrName) == "string" then
+				target = self._TabsByName[tabOrName]
+			elseif type(tabOrName) == "table" and tabOrName._Entry then
+				target = tabOrName._Entry
+			elseif type(tabOrName) == "table" and tabOrName.Page then
+				target = tabOrName
+			end
+			return SwitchTab(target)
+		end
+
+		function Window:GetCurrentTab()
+			return self._ActiveTab and self._ActiveTab.Object or nil
+		end
+
 
 	-- ----------------------------------------------------------
 	--  Window:CreateTab(name)
 	-- ----------------------------------------------------------
-	function Window:CreateTab(name)
+		function Window:CreateTab(name)
+			if self._Destroyed then error("HertaIX: cannot create a tab on a destroyed window", 2) end
+			name = tostring(name or "TAB")
+			if self._TabsByName[name] then
+				error("HertaIX: duplicate tab name '" .. name .. "'", 2)
+			end
 
-		local TAB_W = 73
+			local TAB_W = 73
+
 		local TAB_H = 30
 
 		-- タブボタン：TextButton（透明・クリック受付け用）
@@ -1281,13 +1646,16 @@ function HertaIX:CreateWindow(titleText, theme)
 		Padding.PaddingRight = UDim.new(0, 6)
 		Padding.Parent = Page
 
-		local tabEntry = {
-			Button    = Btn,
-			Page      = Page,
-			Underline = Underline,
-			Status    = BtnStatus,
-			_Order    = 0,
-		}
+			local tabEntry = {
+				Name      = name,
+				Button    = Btn,
+				Page      = Page,
+				Underline = Underline,
+				Status    = BtnStatus,
+				Hidden    = false,
+				_Order    = 0,
+			}
+
 
 		table.insert(self._Tabs, tabEntry)
 		self._TabOffset = self._TabOffset + TAB_W + 5
@@ -1305,10 +1673,54 @@ function HertaIX:CreateWindow(titleText, theme)
 		-- ============================================================
 		--  Tab オブジェクト
 		-- ============================================================
-		local Tab = {}
-		Tab._Entry = tabEntry
+			local Tab = {}
+			Tab._Entry = tabEntry
+			tabEntry.Object = Tab
+			self._TabsByName[name] = tabEntry
 
-		local function NextOrder()
+			function Tab:Select()
+				return Window:SelectTab(self)
+			end
+
+			function Tab:Hide()
+				if tabEntry.Hidden then return false end
+				tabEntry.Hidden = true
+				for _, component in ipairs(Window._Components) do
+					local root = component and component._Root
+					if root and root.Parent and root:IsDescendantOf(tabEntry.Page) and component._ClosePopup then
+						component._ClosePopup()
+					end
+				end
+				tabEntry.Button.Visible = false
+				tabEntry.Page.Visible = false
+				tabEntry.Underline.Visible = false
+				if Window._ActiveTab == tabEntry then
+					Window._ActiveTab = nil
+					for _, candidate in ipairs(Window._Tabs) do
+						if not candidate.Hidden then SwitchTab(candidate); break end
+					end
+				end
+				return true
+			end
+
+			function Tab:Show()
+				if not tabEntry.Hidden then return false end
+				tabEntry.Hidden = false
+				tabEntry.Button.Visible = true
+				if not Window._ActiveTab then SwitchTab(tabEntry) end
+				return true
+			end
+
+			function Tab:IsVisible()
+				return not tabEntry.Hidden
+			end
+
+			function Tab:GetName()
+				return tabEntry.Name
+			end
+
+			local function NextOrder()
+
 			tabEntry._Order = tabEntry._Order + 1
 			return tabEntry._Order
 		end
@@ -1316,7 +1728,7 @@ function HertaIX:CreateWindow(titleText, theme)
 			-- --------------------------------------------------------
 			--  Tab:AddButton(labelText, callback)
 			-- --------------------------------------------------------
-			function Tab:AddButton(labelText, callback)
+			function Tab:AddButton(labelText, callback, config)
 
 				local Bg = MakeHertaFrame(tabEntry.Page, UDim2.new(1, 0, 0, 24), NextOrder())
 
@@ -1388,17 +1800,22 @@ function HertaIX:CreateWindow(titleText, theme)
 						if callback then callback() end
 					end)
 
-					local obj = {}
-					function obj:SetLabel(text)
-						NameLabel.Text = text
-					end
-					return obj
+						local obj = {}
+						function obj:SetLabel(text)
+							NameLabel.Text = text
+						end
+						return _AttachComponentManagement(obj, Bg, Window, config and config.Id, "Button", {
+							callback = callback,
+							setCallback = function(fn) callback = fn end,
+							getCallback = function() return callback end,
+						})
+
 				end
 
 			-- --------------------------------------------------------
 			--  Tab:AddToggle(labelText, default, callback)
 			-- --------------------------------------------------------
-			function Tab:AddToggle(labelText, default, callback)
+			function Tab:AddToggle(labelText, default, callback, config)
 
 			local Enabled = (default == true)
 
@@ -1476,14 +1893,19 @@ function HertaIX:CreateWindow(titleText, theme)
 
 			UpdateToggle()
 
-			local obj = {}
-			function obj:Set(v)
-				Enabled = v
-				UpdateToggle()
-				if callback then callback(Enabled) end
-			end
-			function obj:Get() return Enabled end
-			return obj
+				local obj = {}
+				function obj:Set(v)
+					Enabled = v
+					UpdateToggle()
+					if callback then callback(Enabled) end
+				end
+				function obj:Get() return Enabled end
+				return _AttachComponentManagement(obj, Bg, Window, config and config.Id, "Toggle", {
+					callback = callback,
+					setCallback = function(fn) callback = fn end,
+					getCallback = function() return callback end,
+				})
+
 		end
 
 		-- --------------------------------------------------------
@@ -1598,15 +2020,17 @@ function HertaIX:CreateWindow(titleText, theme)
 				end
 			end)
 
-			UserInputService.InputChanged:Connect(function(Input)
-				if not SliderDragging then return end
+				local SliderInputChangedConn = UserInputService.InputChanged:Connect(function(Input)
+					if not SliderDragging then return end
+
 				if Input.UserInputType ~= Enum.UserInputType.MouseMovement
 				and Input.UserInputType ~= Enum.UserInputType.Touch then return end
 				SetFromPosition(Input.Position.X)
 			end)
 
-			UserInputService.InputEnded:Connect(function(Input)
-				if Input.UserInputType == Enum.UserInputType.MouseButton1
+				local SliderInputEndedConn = UserInputService.InputEnded:Connect(function(Input)
+					if Input.UserInputType == Enum.UserInputType.MouseButton1
+
 				or Input.UserInputType == Enum.UserInputType.Touch then
 					SliderDragging = false
 				end
@@ -1614,20 +2038,33 @@ function HertaIX:CreateWindow(titleText, theme)
 
 			UpdateSlider()
 
-			local obj = {}
-			function obj:Set(v)
-				Value = math.clamp(v, Min, Max)
-				UpdateSlider()
-				if callback then callback(Value) end
-			end
-			function obj:Get() return Value end
-			return obj
+				local obj = {}
+				function obj:Set(v)
+					Value = math.clamp(v, Min, Max)
+					UpdateSlider()
+					if callback then callback(Value) end
+				end
+				function obj:Get() return Value end
+				return _AttachComponentManagement(obj, Bg, Window, options.Id, "Slider", {
+					callback = callback,
+					setCallback = function(fn) callback = fn end,
+					getCallback = function() return callback end,
+					setEnabled = function(isEnabled)
+						if not isEnabled then SliderDragging = false end
+					end,
+					cleanup = function()
+						SliderDragging = false
+						if SliderInputChangedConn then SliderInputChangedConn:Disconnect() end
+						if SliderInputEndedConn then SliderInputEndedConn:Disconnect() end
+					end,
+				})
+
 		end
 
 		-- --------------------------------------------------------
 		--  Tab:AddDropdown(titleText, options, callback)
 		-- --------------------------------------------------------
-		function Tab:AddDropdown(titleText2, options, callback)
+		function Tab:AddDropdown(titleText2, options, callback, config)
 
 			local Selected = nil
 			local Open     = false
@@ -1806,24 +2243,40 @@ function HertaIX:CreateWindow(titleText, theme)
 			BuildOptions()
 			UpdateHeader()
 
-			local obj = {}
-			function obj:Set(v)
-				Selected = v
-				UpdateHeader()
-				if callback then callback(v) end
-			end
-			function obj:Get() return Selected end
-			function obj:Refresh(newOptions)
-				options = newOptions
-				BuildOptions()
-			end
-			return obj
+				local obj = {}
+				function obj:Set(v)
+					Selected = v
+					UpdateHeader()
+					if callback then callback(v) end
+				end
+				function obj:Get() return Selected end
+				function obj:Refresh(newOptions)
+					options = newOptions
+					BuildOptions()
+				end
+				return _AttachComponentManagement(obj, Container, Window, (config and config.Id) or options.Id, "Dropdown", {
+					callback = callback,
+					setCallback = function(fn) callback = fn end,
+					getCallback = function() return callback end,
+					closePopup = function() Open = false; ListFrame.Visible = false end,
+					setVisible = function(isVisible)
+						if not isVisible then Open = false; ListFrame.Visible = false end
+					end,
+					setEnabled = function(isEnabled)
+						if not isEnabled then Open = false; ListFrame.Visible = false end
+					end,
+					cleanup = function()
+						Open = false
+						if ListFrame and ListFrame.Parent then ListFrame:Destroy() end
+					end,
+				})
+
 		end
 
 			-- --------------------------------------------------------
 			--  Tab:AddLabel(text)
 			-- --------------------------------------------------------
-			function Tab:AddLabel(text)
+			function Tab:AddLabel(text, config)
 
 				local Bg = Instance.new("Frame")
 				Bg.Size = UDim2.new(1, 0, 0, 20)
@@ -1865,10 +2318,11 @@ function HertaIX:CreateWindow(titleText, theme)
 				Label.Parent = Bg
 				table.insert(ThemeListeners, { type = "text_lt", obj = Label })
 
-				local obj = {}
-				function obj:Set(v) Label.Text = tostring(v) end
-				function obj:Get() return Label.Text end
-				return obj
+					local obj = {}
+					function obj:Set(v) Label.Text = tostring(v) end
+					function obj:Get() return Label.Text end
+					return _AttachComponentManagement(obj, Bg, Window, config and config.Id, "Label")
+
 			end
 
 			-- --------------------------------------------------------
@@ -1960,8 +2414,17 @@ function HertaIX:CreateWindow(titleText, theme)
 					function TextboxObject:SetPlaceholder(Text)
 						Box.PlaceholderText = tostring(Text)
 					end
-					TextboxObject.Object = Bg
-					return TextboxObject
+						TextboxObject.Object = Bg
+						return _AttachComponentManagement(TextboxObject, Bg, Window, Config.Id, "Textbox", {
+							callback = Config.Callback,
+							setCallback = function(fn) Config.Callback = fn end,
+							getCallback = function() return Config.Callback end,
+							setEnabled = function(isEnabled)
+								Box.TextEditable = isEnabled
+								if not isEnabled then Box:ReleaseFocus() end
+							end,
+						})
+
 				end
 
 				-- --------------------------------------------------------
@@ -2204,8 +2667,9 @@ function HertaIX:CreateWindow(titleText, theme)
 							hueDragging = false
 						end
 					end)
-					UserInputService.InputChanged:Connect(function(inp)
-						if hueDragging and (
+						local HueInputChangedConn = UserInputService.InputChanged:Connect(function(inp)
+							if hueDragging and (
+
 							inp.UserInputType == Enum.UserInputType.MouseMovement
 							or inp.UserInputType == Enum.UserInputType.Touch
 						) then
@@ -2237,8 +2701,9 @@ function HertaIX:CreateWindow(titleText, theme)
 							svDragging = false
 						end
 					end)
-					UserInputService.InputChanged:Connect(function(inp)
-						if svDragging and (
+						local SVInputChangedConn = UserInputService.InputChanged:Connect(function(inp)
+							if svDragging and (
+
 							inp.UserInputType == Enum.UserInputType.MouseMovement
 							or inp.UserInputType == Enum.UserInputType.Touch
 						) then
@@ -2249,16 +2714,34 @@ function HertaIX:CreateWindow(titleText, theme)
 					-- 初期ビジュアル更新
 					UpdateVisuals()
 
-					local cpObj = {}
-					function cpObj:Set(color)
-						currentColor = color
-						H_val, S_val, V_val = Color3.toHSV(color)
-						UpdateVisuals()
-					end
-					function cpObj:Get()
-						return currentColor
-					end
-					return cpObj
+						local cpObj = {}
+						function cpObj:Set(color)
+							currentColor = color
+							H_val, S_val, V_val = Color3.toHSV(color)
+							UpdateVisuals()
+						end
+						function cpObj:Get()
+							return currentColor
+						end
+						return _AttachComponentManagement(cpObj, Container, Window, Config.Id, "ColorPicker", {
+							callback = Config.Callback,
+							setCallback = function(fn) Config.Callback = fn end,
+							getCallback = function() return Config.Callback end,
+							closePopup = function() pickerOpen = false; Panel.Visible = false end,
+							setVisible = function(isVisible)
+								if not isVisible then pickerOpen = false; Panel.Visible = false end
+							end,
+							setEnabled = function(isEnabled)
+								if not isEnabled then pickerOpen = false; hueDragging = false; svDragging = false; Panel.Visible = false end
+							end,
+							cleanup = function()
+								pickerOpen = false; hueDragging = false; svDragging = false
+								if HueInputChangedConn then HueInputChangedConn:Disconnect() end
+								if SVInputChangedConn then SVInputChangedConn:Disconnect() end
+								if Panel and Panel.Parent then Panel:Destroy() end
+							end,
+						})
+
 				end
 
 				-- --------------------------------------------------------
@@ -2357,22 +2840,41 @@ function HertaIX:CreateWindow(titleText, theme)
 						end)
 					end)
 
-					local kbObj = {}
-					function kbObj:Set(keyCode)
-						currentKey = keyCode
-						UpdateKeyLabel()
-					end
-					function kbObj:Get()
-						return currentKey
-					end
-					return kbObj
+						local kbObj = {}
+						function kbObj:Set(keyCode)
+							currentKey = keyCode
+							UpdateKeyLabel()
+						end
+						function kbObj:Get()
+							return currentKey
+						end
+						return _AttachComponentManagement(kbObj, Bg, Window, Config.Id, "Keybind", {
+							callback = Config.Callback,
+							setCallback = function(fn) Config.Callback = fn end,
+							getCallback = function() return Config.Callback end,
+							setEnabled = function(isEnabled)
+								if not isEnabled and conn then
+								conn:Disconnect(); conn = nil; listening = false
+								KBStroke.Thickness = 1
+								KBStroke.Transparency = 0.5
+								UpdateKeyLabel()
+							end
+							end,
+							cleanup = function()
+								if conn then conn:Disconnect(); conn = nil end
+								listening = false
+								KBStroke.Thickness = 1
+								KBStroke.Transparency = 0.5
+							end,
+						})
+
 				end
 
 				-- --------------------------------------------------------
 				--  Tab:AddMultiDropdown(titleText, options, callback)
 				--  複数選択可能なドロップダウン
 				-- --------------------------------------------------------
-				function Tab:AddMultiDropdown(titleText2, options, callback)
+				function Tab:AddMultiDropdown(titleText2, options, callback, config)
 
 					local Selected = {}  -- { [optName] = true }
 					local Open     = false
@@ -2554,37 +3056,53 @@ function HertaIX:CreateWindow(titleText, theme)
 					BuildOptions()
 					UpdateHeader()
 
-					local mdObj = {}
-					function mdObj:Get()
-						return GetSelected()
-					end
-					function mdObj:Set(arr)
-						Selected = {}
-						for _, v in ipairs(arr) do Selected[v] = true end
-						BuildOptions()
-						UpdateHeader()
-						if callback then callback(GetSelected()) end
-					end
-					function mdObj:Clear()
-						Selected = {}
-						BuildOptions()
-						UpdateHeader()
-						if callback then callback({}) end
-					end
-					function mdObj:Refresh(newOptions)
-						options = newOptions
-						Selected = {}
-						BuildOptions()
-						UpdateHeader()
-					end
-					return mdObj
+						local mdObj = {}
+						function mdObj:Get()
+							return GetSelected()
+						end
+						function mdObj:Set(arr)
+							Selected = {}
+							for _, v in ipairs(arr) do Selected[v] = true end
+							BuildOptions()
+							UpdateHeader()
+							if callback then callback(GetSelected()) end
+						end
+						function mdObj:Clear()
+							Selected = {}
+							BuildOptions()
+							UpdateHeader()
+							if callback then callback({}) end
+						end
+						function mdObj:Refresh(newOptions)
+							options = newOptions
+							Selected = {}
+							BuildOptions()
+							UpdateHeader()
+						end
+						return _AttachComponentManagement(mdObj, Container, Window, (config and config.Id) or options.Id, "MultiDropdown", {
+							callback = callback,
+							setCallback = function(fn) callback = fn end,
+							getCallback = function() return callback end,
+							closePopup = function() Open = false; ListFrame.Visible = false end,
+							setVisible = function(isVisible)
+								if not isVisible then Open = false; ListFrame.Visible = false end
+							end,
+							setEnabled = function(isEnabled)
+								if not isEnabled then Open = false; ListFrame.Visible = false end
+							end,
+							cleanup = function()
+								Open = false
+								if ListFrame and ListFrame.Parent then ListFrame:Destroy() end
+							end,
+						})
+
 				end
 
 				-- --------------------------------------------------------
 				--  Tab:AddSection(text)
 				--  セクション区切り見出し
 				-- --------------------------------------------------------
-				function Tab:AddSection(text)
+				function Tab:AddSection(text, config)
 
 					local Container = Instance.new("Frame")
 					Container.Size = UDim2.new(1, 0, 0, 13)
@@ -2641,10 +3159,11 @@ function HertaIX:CreateWindow(titleText, theme)
 					SectionLbl.Parent = Container
 					table.insert(ThemeListeners, { type = "text_mid", obj = SectionLbl })
 
-					local secObj = {}
-					function secObj:Set(v) SectionLbl.Text = tostring(v) end
-					function secObj:Get() return SectionLbl.Text end
-					return secObj
+						local secObj = {}
+						function secObj:Set(v) SectionLbl.Text = tostring(v) end
+						function secObj:Get() return SectionLbl.Text end
+						return _AttachComponentManagement(secObj, Container, Window, config and config.Id, "Section")
+
 				end
 
 				-- --------------------------------------------------------
@@ -2746,19 +3265,20 @@ function HertaIX:CreateWindow(titleText, theme)
 
 					UpdateBar()
 
-					local pbObj = {}
-					function pbObj:Set(v)
-						curVal = math.clamp(tonumber(v) or minVal, minVal, maxVal)
-						UpdateBar()
-					end
-					function pbObj:Get()
-						return curVal
-					end
-					function pbObj:SetMax(v)
-						maxVal = tonumber(v) or maxVal
-						UpdateBar()
-					end
-					return pbObj
+						local pbObj = {}
+						function pbObj:Set(v)
+							curVal = math.clamp(tonumber(v) or minVal, minVal, maxVal)
+							UpdateBar()
+						end
+						function pbObj:Get()
+							return curVal
+						end
+						function pbObj:SetMax(v)
+							maxVal = tonumber(v) or maxVal
+							UpdateBar()
+						end
+						return _AttachComponentManagement(pbObj, Container, Window, Config.Id, "ProgressBar")
+
 				end
 
 				-- --------------------------------------------------------
@@ -2767,7 +3287,7 @@ function HertaIX:CreateWindow(titleText, theme)
 				--  imageName: images.lua に登録したキー名、または直接アセットID文字列
 				--  height: 表示高さ(px)、デフォルト120
 				-- --------------------------------------------------------
-				function Tab:AddImage(imageName, height)
+				function Tab:AddImage(imageName, height, config)
 
 					height = height or 80
 
@@ -2801,18 +3321,19 @@ function HertaIX:CreateWindow(titleText, theme)
 
 					ApplyImage(imageName)
 
-					local imgObj = {}
-					function imgObj:SetImage(nameOrId)
-						ApplyImage(nameOrId)
-					end
-					function imgObj:SetHeight(h)
-						height = h
-						Bg.Size = UDim2.new(1, 0, 0, h)
-					end
-					function imgObj:GetImageLabel()
-						return ImgLabel
-					end
-					return imgObj
+						local imgObj = {}
+						function imgObj:SetImage(nameOrId)
+							ApplyImage(nameOrId)
+						end
+						function imgObj:SetHeight(h)
+							height = h
+							Bg.Size = UDim2.new(1, 0, 0, h)
+						end
+						function imgObj:GetImageLabel()
+							return ImgLabel
+						end
+						return _AttachComponentManagement(imgObj, Bg, Window, config and config.Id, "Image")
+
 				end
 
 
@@ -3044,9 +3565,11 @@ function HertaIX:CreateWindow(titleText, theme)
 							end
 
 							-- 単一Viewportオブジェクト
-							local vpObj = {}
+														local vpObj = {}
+														local targetCallback = Config.Callback
 
-							function vpObj:SetTarget(target)
+														function vpObj:SetTarget(target)
+
 								local model, name, userId, hum, rootPart
 								local ok, isPlayer = pcall(function() return target:IsA("Player") end)
 								if ok and isPlayer then
@@ -3066,9 +3589,11 @@ function HertaIX:CreateWindow(titleText, theme)
 									rootPart = model:FindFirstChild("HumanoidRootPart")
 											 or model:FindFirstChildWhichIsA("BasePart")
 								end
-								UpdateHP(hum)
-								UpdatePos(rootPart)
-							end
+															UpdateHP(hum)
+															UpdatePos(rootPart)
+															if targetCallback then targetCallback(target) end
+														end
+
 
 							function vpObj:SetCamera(cframe)
 								VPCam.CFrame = cframe
@@ -3089,14 +3614,20 @@ function HertaIX:CreateWindow(titleText, theme)
 								HPFill.Size    = UDim2.new(0, 0, 1, 0)
 							end
 
-							vpObj._cleanup = function()
-								CleanupClone()
-								if _hpConn  then _hpConn:Disconnect();  _hpConn  = nil end
-								if _posConn then _posConn:Disconnect(); _posConn = nil end
-								Bg:Destroy()
-							end
+														vpObj._cleanup = function()
+															CleanupClone()
+															if _hpConn  then _hpConn:Disconnect();  _hpConn  = nil end
+															if _posConn then _posConn:Disconnect(); _posConn = nil end
+															if Bg and Bg.Parent then Bg:Destroy() end
+														end
 
-							return vpObj
+														return _AttachComponentManagement(vpObj, Bg, Window, nil, "Viewport", {
+															callback = targetCallback,
+															setCallback = function(fn) targetCallback = fn end,
+															getCallback = function() return targetCallback end,
+															cleanup = vpObj._cleanup,
+														})
+
 						end
 
 						-- ============================================================
@@ -3104,17 +3635,25 @@ function HertaIX:CreateWindow(titleText, theme)
 						-- ============================================================
 						if not multiPlayer then
 							local vpObj = BuildSingleViewport(tabEntry.Page, nil, nil)
-							if Config.Target then
-								vpObj:SetTarget(Config.Target)
-							end
-							return vpObj
+											if Config.Target then
+												vpObj:SetTarget(Config.Target)
+											end
+											if Config.Id then
+												Window:_ReassignComponentId(vpObj, Config.Id)
+											end
+											return vpObj
+
 						end
 
 						-- ============================================================
 						--  MultiPlayer = true: MultiDropdownで複数プレイヤーを管理
 						-- ============================================================
-						local PlayersService = game:GetService("Players")
-						local _activeViewports = {}  -- { [playerName] = vpObj }
+									local PlayersService = game:GetService("Players")
+									local _activeViewports = {}  -- { [playerName] = vpObj }
+									local multiVisible = true
+									local multiEnabled = true
+									local selectionCallback = Config.Callback
+
 
 						local function GetPlayerNames()
 							local names = {}
@@ -3127,8 +3666,8 @@ function HertaIX:CreateWindow(titleText, theme)
 						local function RemovePlayerViewport(playerName, reason)
 							local entry = _activeViewports[playerName]
 							if not entry then return end
-							entry._cleanup()
-							_activeViewports[playerName] = nil
+								entry:Destroy()
+								_activeViewports[playerName] = nil
 							if WindowRef then
 								WindowRef:Notify(
 									"Viewport 削除",
@@ -3154,8 +3693,11 @@ function HertaIX:CreateWindow(titleText, theme)
 									vpObj:SetTarget(player)
 								end)
 							end
-							_activeViewports[player.Name] = vpObj
-						end
+												vpObj:SetVisible(multiVisible)
+												vpObj:SetEnabled(multiEnabled)
+												_activeViewports[player.Name] = vpObj
+											end
+
 
 						-- MultiDropdown
 						local dd = Tab:AddMultiDropdown("プレイヤー選択", GetPlayerNames(), function(selected)
@@ -3169,19 +3711,22 @@ function HertaIX:CreateWindow(titleText, theme)
 								end
 							end
 							-- 選択解除 → Viewport削除
-							for name in pairs(_activeViewports) do
-								if not selectedSet[name] then
-									RemovePlayerViewport(name, "選択解除")
-								end
-							end
-						end)
+											for name in pairs(_activeViewports) do
+												if not selectedSet[name] then
+													RemovePlayerViewport(name, "選択解除")
+												end
+											end
+											if selectionCallback then selectionCallback(selected) end
+										end)
+
 
 						-- プレイヤー入退室の自動更新
-						PlayersService.PlayerAdded:Connect(function()
-							dd:Refresh(GetPlayerNames())
-						end)
+									local PlayerAddedConn = PlayersService.PlayerAdded:Connect(function()
+										dd:Refresh(GetPlayerNames())
+									end)
 
-						PlayersService.PlayerRemoving:Connect(function(p)
+									local PlayerRemovingConn = PlayersService.PlayerRemoving:Connect(function(p)
+
 							if _activeViewports[p.Name] then
 								RemovePlayerViewport(p.Name, "退出")
 							end
@@ -3207,17 +3752,42 @@ function HertaIX:CreateWindow(titleText, theme)
 							dd:Set(newSel)
 						end
 
-						function mvObj:ClearAll()
-							for name in pairs(_activeViewports) do
-								RemovePlayerViewport(name, "全削除")
-							end
-							dd:Clear()
-						end
+									function mvObj:ClearAll()
+										local names = {}
+										for name in pairs(_activeViewports) do table.insert(names, name) end
+										for _, name in ipairs(names) do
+											RemovePlayerViewport(name, "全削除")
+										end
+										dd:Clear()
+									end
 
-						return mvObj
+									return _AttachComponentManagement(mvObj, dd._Root, Window, Config.Id, "MultiViewport", {
+										callback = selectionCallback,
+										setCallback = function(fn) selectionCallback = fn end,
+										getCallback = function() return selectionCallback end,
+setVisible = function(isVisible)
+										multiVisible = isVisible
+										dd:SetVisible(isVisible)
+										for _, entry in pairs(_activeViewports) do entry:SetVisible(isVisible) end
+									end,
+									setEnabled = function(isEnabled)
+										multiEnabled = isEnabled
+										dd:SetEnabled(isEnabled)
+										for _, entry in pairs(_activeViewports) do entry:SetEnabled(isEnabled) end
+									end,
+										cleanup = function()
+											if PlayerAddedConn then PlayerAddedConn:Disconnect() end
+											if PlayerRemovingConn then PlayerRemovingConn:Disconnect() end
+											local names = {}
+											for name in pairs(_activeViewports) do table.insert(names, name) end
+											for _, name in ipairs(names) do RemovePlayerViewport(name, "破棄") end
+											dd:Destroy()
+										end,
+									})
+
 					end
 
-				function Tab:AddParagraph(pTitle, descText)
+				function Tab:AddParagraph(pTitle, descText, config)
 
 			local Bg = Instance.new("Frame")
 			Bg.Size = UDim2.new(1, 0, 0, 40)
@@ -3282,13 +3852,14 @@ function HertaIX:CreateWindow(titleText, theme)
 			Desc:GetPropertyChangedSignal("TextBounds"):Connect(UpdateSize)
 			UpdateSize()
 
-			local obj = {}
-			function obj:SetTitle(v) TitleLbl.Text = tostring(v) end
-			function obj:SetDesc(v)
-				Desc.Text = tostring(v)
-				UpdateSize()
-			end
-			return obj
+				local obj = {}
+				function obj:SetTitle(v) TitleLbl.Text = tostring(v) end
+				function obj:SetDesc(v)
+					Desc.Text = tostring(v)
+					UpdateSize()
+				end
+				return _AttachComponentManagement(obj, Bg, Window, config and config.Id, "Paragraph")
+
 		end
 
 		return Tab
