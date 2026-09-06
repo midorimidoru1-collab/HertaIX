@@ -939,6 +939,26 @@ function HertaIX:CreateWindow(titleText, theme)
 	local Resizable = true
 	local ResizeHandle = nil
 
+	-- 最小化中のMain.Positionは上端アンカー基準の絶対座標になる。
+	-- その位置を、展開状態で使用するAnchorPoint/Scale/Offsetへ逆変換して保存する。
+	local function CaptureFullPositionFromMinimized()
+		local parent = Main.Parent
+		if not parent then return end
+
+		local parentPosition = parent.AbsolutePosition
+		local parentSize = parent.AbsoluteSize
+		local fullWidth = parentSize.X * FullSize.X.Scale + FullSize.X.Offset
+		local fullHeight = parentSize.Y * FullSize.Y.Scale + FullSize.Y.Offset
+		local topLeft = Main.AbsolutePosition
+		local anchoredX = topLeft.X - parentPosition.X + fullWidth * FullAnchorPoint.X
+		local anchoredY = topLeft.Y - parentPosition.Y + fullHeight * FullAnchorPoint.Y
+
+		FullPosition = UDim2.new(
+			FullPosition.X.Scale, math.round(anchoredX - parentSize.X * FullPosition.X.Scale),
+			FullPosition.Y.Scale, math.round(anchoredY - parentSize.Y * FullPosition.Y.Scale)
+		)
+	end
+
 	-- 最小化（上端基準で畳む）
 	Minimize.MouseButton1Click:Connect(function()
 		if Transitioning then return end
@@ -1275,11 +1295,19 @@ function HertaIX:CreateWindow(titleText, theme)
 			or Input.UserInputType == Enum.UserInputType.Touch
 		) then
 			local Delta = Input.Position - DragStart
-			Main.Position = UDim2.new(
-				StartPos.X.Scale, StartPos.X.Offset + Delta.X,
-				StartPos.Y.Scale, StartPos.Y.Offset + Delta.Y
-			)
-		end
+				Main.Position = UDim2.new(
+					StartPos.X.Scale, StartPos.X.Offset + Delta.X,
+					StartPos.Y.Scale, StartPos.Y.Offset + Delta.Y
+				)
+
+				-- 最小化中にドラッグされた場合は、復元先も最新位置へ更新する。
+				if Minimized then
+					CaptureFullPositionFromMinimized()
+				else
+					FullPosition = Main.Position
+					FullAnchorPoint = Main.AnchorPoint
+				end
+			end
 	end)
 
 		-- リサイズハンドル（右下）。最小化時とSetResizable(false)時は非表示。
@@ -1454,6 +1482,12 @@ function HertaIX:CreateWindow(titleText, theme)
 				error("HertaIX: SetPosition expects UDim2 or Vector2", 2)
 			end
 			Main.Position = position
+			if Minimized then
+				CaptureFullPositionFromMinimized()
+			else
+				FullPosition = position
+				FullAnchorPoint = Main.AnchorPoint
+			end
 			return position
 		end
 
