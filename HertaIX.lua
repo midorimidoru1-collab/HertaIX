@@ -925,42 +925,79 @@ function HertaIX:CreateWindow(titleText, theme)
 		end
 	end)
 
-	-- 最小化（上端基準で畳む）
+	-- 最小化・CRT・リサイズが共有するWindow状態。
+	-- この宣言はMinimize接続より前に置く必要がある。Luaでは後方のlocal
+	-- 変数を先行するクロージャが捕捉できないためである。
 	local FullSize = Main.Size
+	local FullPosition = Main.Position
+	local FullAnchorPoint = Main.AnchorPoint
+	local OriginalSize = Main.Size
 	local Minimized = false
+	local Transitioning = false
+	local TransitionState = nil
+	local Draggable = true
+	local Resizable = true
+	local ResizeHandle = nil
 
+	-- 最小化（上端基準で畳む）
 	Minimize.MouseButton1Click:Connect(function()
-		Minimized = not Minimized
-		if Minimized then
-			local absPos  = Main.AbsolutePosition
+		if Transitioning then return end
+		Transitioning = true
+
+		if not Minimized then
+			TransitionState = "minimizing"
+			-- 展開状態を保存してから上端アンカーへ切り替える。
+			FullSize = Main.Size
+			FullPosition = Main.Position
+			FullAnchorPoint = Main.AnchorPoint
+			Minimized = true
+
+			local absPos = Main.AbsolutePosition
 			local absSize = Main.AbsoluteSize
-			local topY    = absPos.Y
+			local topY = absPos.Y
 			local centerX = absPos.X + absSize.X / 2
 			Main.AnchorPoint = Vector2.new(0.5, 0)
 			Main.Position = UDim2.new(0, centerX, 0, topY)
-			-- コンテンツを即座に隠す（ClipsDescendants=falseでもはみ出さないように）
-				ContentArea.Visible = false
-				TabBar.Visible = false
-				ResizeHandle.Visible = false
-				TweenService:Create(
 
+			-- コンテンツを即座に隠し、最小化中に操作できるUIを残さない。
+			ContentArea.Visible = false
+			TabBar.Visible = false
+			if ResizeHandle then ResizeHandle.Visible = false end
+
+			local tween = TweenService:Create(
 				Main,
 				TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
 				{ Size = UDim2.new(FullSize.X.Scale, FullSize.X.Offset, 0, 37) }
-			):Play()
+			)
+			tween.Completed:Connect(function()
+				TransitionState = nil
+				Transitioning = false
+			end)
+			tween:Play()
 		else
-			TweenService:Create(
+			TransitionState = "restoring"
+			Minimized = false
+			local tween = TweenService:Create(
 				Main,
 				TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
 				{ Size = FullSize }
-			):Play()
-			-- 展開完了後にコンテンツを再表示
-			task.delay(0.21, function()
-					ContentArea.Visible = true
-					TabBar.Visible = true
-					ResizeHandle.Visible = Resizable
-				end)
-
+			)
+			tween.Completed:Connect(function()
+				if not Main.Parent then
+					TransitionState = nil
+					Transitioning = false
+					return
+				end
+				-- 最小化前の位置・アンカーを完全に戻す。
+				Main.AnchorPoint = FullAnchorPoint
+				Main.Position = FullPosition
+				ContentArea.Visible = true
+				TabBar.Visible = true
+				if ResizeHandle then ResizeHandle.Visible = Resizable end
+				TransitionState = nil
+				Transitioning = false
+			end)
+			tween:Play()
 		end
 	end)
 
@@ -1041,11 +1078,7 @@ function HertaIX:CreateWindow(titleText, theme)
 	table.insert(ThemeListeners, { type = "headerline", obj = MBAccent })
 
 		-- CRTアニメーション共通関数
-		-- 以下はCRT関数からも参照するため、先に同一スコープで宣言する。
-		local Draggable = true
-		local Resizable = true
-		local ResizeHandle = nil
-		local OriginalSize = Main.Size
+		-- 共有状態は最小化接続より前で宣言済み。
 
 
 	-- アニメ中に非表示にする子要素一覧
@@ -1141,32 +1174,74 @@ function HertaIX:CreateWindow(titleText, theme)
 		end)
 	end
 
-	local function ShowMiniBar()
+		local function ShowMiniBar()
+		if Transitioning then return end
+		Transitioning = true
+		TransitionState = "closing"
+
+		-- 最小化状態から閉じた場合も、ミニバー復元後に矛盾した
+		-- 最小化フラグや非表示コンテンツを残さないよう展開状態へ正規化する。
+		if Minimized then
+			Minimized = false
+			Main.Size = FullSize
+			Main.AnchorPoint = FullAnchorPoint
+			Main.Position = FullPosition
+			ContentArea.Visible = true
+			TabBar.Visible = true
+			if ResizeHandle then ResizeHandle.Visible = Resizable end
+		end
+
 		CRTClose(function()
-			-- 閉じるアニメ完了後にミニバーを表示
+			if not ScreenGui.Parent then
+				TransitionState = nil
+				Transitioning = false
+				return
+			end
+			-- 閉じるアニメ完了後にミニバーを表示する。
 			local inset = game:GetService("GuiService"):GetGuiInset()
 			MiniBar.Position = UDim2.new(0.5, 0, 0, -80)
-			TweenService:Create(
+			local tween = TweenService:Create(
 				MiniBar,
 				TweenInfo.new(0.22, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
 				{ Position = UDim2.new(0.5, 0, 0, -inset.Y) }
-			):Play()
+			)
+			tween.Completed:Connect(function()
+				TransitionState = nil
+				Transitioning = false
+			end)
+			tween:Play()
 		end)
 	end
 
 	local function HideMiniBar()
-		TweenService:Create(
+		if Transitioning then return end
+		Transitioning = true
+		TransitionState = "opening"
+		local tween = TweenService:Create(
 			MiniBar,
 			TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
 			{ Position = UDim2.new(0.5, 0, 0, -80) }
-		):Play()
-		task.delay(0.2, function()
-			CRTOpen()
+		)
+		tween.Completed:Connect(function()
+			if not ScreenGui.Parent then
+				TransitionState = nil
+				Transitioning = false
+				return
+			end
+			CRTOpen(function()
+				TransitionState = nil
+				Transitioning = false
+			end)
 		end)
+		tween:Play()
 	end
 
-	Close.MouseButton1Click:Connect(ShowMiniBar)
-	MiniBar.MouseButton1Click:Connect(HideMiniBar)
+		Close.MouseButton1Click:Connect(function()
+			if not Transitioning then ShowMiniBar() end
+		end)
+		MiniBar.MouseButton1Click:Connect(function()
+			if not Transitioning then HideMiniBar() end
+		end)
 
 		-- ドラッグ（DragHandle・DragLineを押している間のみ可能）
 		Draggable = true
@@ -1175,7 +1250,7 @@ function HertaIX:CreateWindow(titleText, theme)
 		local DragInputChangedConn = nil
 
 		local function StartDrag(Input)
-			if not Draggable then return end
+			if not Draggable or Transitioning then return end
 			if Input.UserInputType == Enum.UserInputType.MouseButton1
 
 		or Input.UserInputType == Enum.UserInputType.Touch then
@@ -1232,7 +1307,7 @@ function HertaIX:CreateWindow(titleText, theme)
 		local MAX_WIDTH, MAX_HEIGHT = 900, 700
 
 		ResizeHandle.InputBegan:Connect(function(Input)
-			if not Resizable or Minimized then return end
+			if not Resizable or Minimized or Transitioning then return end
 			if Input.UserInputType == Enum.UserInputType.MouseButton1
 				or Input.UserInputType == Enum.UserInputType.Touch then
 				Resizing = true
@@ -1347,7 +1422,7 @@ function HertaIX:CreateWindow(titleText, theme)
 		--  Window configuration and lifecycle API
 		-- ----------------------------------------------------------
 		function Window:SetSize(size)
-			if self._Destroyed then return false end
+			if self._Destroyed or Transitioning then return false end
 			if typeof(size) == "Vector2" then size = UDim2.fromOffset(size.X, size.Y) end
 			if typeof(size) ~= "UDim2" then
 				error("HertaIX: SetSize expects UDim2 or Vector2", 2)
@@ -1373,7 +1448,7 @@ function HertaIX:CreateWindow(titleText, theme)
 		end
 
 		function Window:SetPosition(position)
-			if self._Destroyed then return false end
+			if self._Destroyed or Transitioning then return false end
 			if typeof(position) == "Vector2" then position = UDim2.fromOffset(position.X, position.Y) end
 			if typeof(position) ~= "UDim2" then
 				error("HertaIX: SetPosition expects UDim2 or Vector2", 2)
@@ -1400,7 +1475,7 @@ function HertaIX:CreateWindow(titleText, theme)
 		end
 
 		function Window:SetResizable(enabled)
-			if self._Destroyed then return false end
+			if self._Destroyed or Transitioning then return false end
 			Resizable = enabled == true
 			if not Resizable then Resizing = false end
 			ResizeHandle.Visible = Resizable and Main.Visible and not Minimized
@@ -1413,6 +1488,7 @@ function HertaIX:CreateWindow(titleText, theme)
 
 		function Window:GetState()
 			if self._Destroyed or not ScreenGui.Parent then return "destroyed" end
+			if Transitioning then return TransitionState or "transitioning" end
 			if not Main.Visible then return "closed" end
 			if Minimized then return "minimized" end
 			return "open"
@@ -1428,6 +1504,8 @@ function HertaIX:CreateWindow(titleText, theme)
 			_titleRainbowActive = false
 			Dragging = false
 			Resizing = false
+			Transitioning = false
+			TransitionState = nil
 			if DragInputChangedConn then DragInputChangedConn:Disconnect(); DragInputChangedConn = nil end
 			if ResizeInputChangedConn then ResizeInputChangedConn:Disconnect(); ResizeInputChangedConn = nil end
 			local snapshot = {}
