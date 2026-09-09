@@ -187,10 +187,11 @@ local function ApplyTheme(name)
 		elseif entry.type == "mainbg" then
 			obj.BackgroundColor3 = T.mainBg
 			obj.BackgroundTransparency = T.mainAlpha
-		elseif entry.type == "notification_mainbg" then
-			-- 通知はメインGUIの縮小版として明度を高めに保つ。
-			obj.BackgroundColor3 = T.mainBg
-			obj.BackgroundTransparency = 0.78
+		elseif entry.type == "notification_bg" then
+			-- 暗い水色系の通知背景。テーマ背景色にaccentを30%混ぜ、
+			-- 透明度を上げて重く見えない明るさを確保する。
+			obj.BackgroundColor3 = T.bg:Lerp(T.accent, 0.30)
+			obj.BackgroundTransparency = 0.52
 		elseif entry.type == "text_accent" then
 			obj.TextColor3 = C_ACCENT
 		elseif entry.type == "text_lt" then
@@ -248,9 +249,10 @@ local function ApplyTheme(name)
 						elseif t=="mainbg" then
 							obj2.BackgroundColor3 = col
 							obj2.BackgroundTransparency = mainAlpha
-						elseif t=="notification_mainbg" then
-							obj2.BackgroundColor3 = col
-							obj2.BackgroundTransparency = 0.78
+						elseif t=="notification_bg" then
+							-- rainbowテーマでも背景は黒トーンを維持する。
+							obj2.BackgroundColor3 = C_BG
+							obj2.BackgroundTransparency = 0.52
 						elseif t=="text_accent" or t=="text_lt"
 						or t=="text_mid" or t=="text_main"
 						or t=="text_dark" then
@@ -4015,8 +4017,8 @@ setVisible = function(isVisible)
 		--  メインHertaIXウィンドウを縮小した構造を使用する。
 		-- ----------------------------------------------------------
 		local _NotifyStack = {}
-		local NOTIFY_W = 220
-		local NOTIFY_H = 96
+		local NOTIFY_W = 173
+		local NOTIFY_H = 48
 		local NOTIFY_GAP = 5
 		local NOTIFY_RIGHT = 7
 		local NOTIFY_BOTTOM = 7
@@ -4058,8 +4060,8 @@ setVisible = function(isVisible)
 			local Sweep = Instance.new("Frame")
 			Sweep.Name = "Sweep"
 			Sweep.BorderSizePixel = 0
-			Sweep.Size = UDim2.new(1, 0, 0, 13)
-			Sweep.Position = UDim2.fromOffset(0, -13)
+			Sweep.Size = UDim2.new(1, 0, 0, 8)
+				Sweep.Position = UDim2.fromOffset(0, -8)
 			Sweep.BackgroundColor3 = accentLt
 			Sweep.BackgroundTransparency = 0.70
 			Sweep.Parent = ScanLayer
@@ -4067,11 +4069,11 @@ setVisible = function(isVisible)
 
 			task.spawn(function()
 				while frame.Parent and screenGui.Parent do
-					Sweep.Position = UDim2.fromOffset(0, -13)
+					Sweep.Position = UDim2.fromOffset(0, -8)
 					local tween = TweenService:Create(
 						Sweep,
 						TweenInfo.new(2.2, Enum.EasingStyle.Linear),
-						{ Position = UDim2.new(0, 0, 1, 13) }
+						{ Position = UDim2.new(0, 0, 1, 8) }
 					)
 					tween:Play()
 					tween.Completed:Wait()
@@ -4092,7 +4094,7 @@ setVisible = function(isVisible)
 					local Line = Instance.new("Frame")
 					Line.BorderSizePixel = 0
 					Line.Size = UDim2.fromOffset(length, 1)
-					Line.Position = UDim2.new(0, -length, 0, math.random(35, effectHeight - 8))
+					Line.Position = UDim2.new(0, -length, 0, math.random(25, effectHeight - 6))
 					Line.BackgroundColor3 = accentMid
 					Line.BackgroundTransparency = 0.28
 					Line.Parent = DataLayer
@@ -4132,12 +4134,12 @@ setVisible = function(isVisible)
 			Notification.Name = "HertaIXNotification"
 			Notification.Size = UDim2.fromOffset(NOTIFY_W, NOTIFY_H)
 			Notification.Position = UDim2.new(1, NOTIFY_RIGHT, 1, -NOTIFY_BOTTOM)
-			Notification.BackgroundColor3 = C_ACCENT
-			Notification.BackgroundTransparency = 0.70
+			Notification.BackgroundColor3 = C_BG:Lerp(C_ACCENT, 0.30)
+			Notification.BackgroundTransparency = 0.52
 			Notification.BorderSizePixel = 0
 			Notification.ClipsDescendants = false
 			Notification.Parent = self._ScreenGui
-			table.insert(ThemeListeners, { type = "notification_mainbg", obj = Notification })
+			table.insert(ThemeListeners, { type = "notification_bg", obj = Notification })
 
 			local OuterStroke = Instance.new("UIStroke")
 			OuterStroke.Color = C_ACCENT
@@ -4167,8 +4169,8 @@ setVisible = function(isVisible)
 			AddMiniMainEffects(Notification, self._ScreenGui, NOTIFY_H, true, C_ACCENT, C_ACCENT_LT, C_ACCENT_MID)
 
 			local HeaderIcon = Instance.new("ImageLabel")
-			HeaderIcon.Size = UDim2.fromOffset(17, 17)
-			HeaderIcon.Position = UDim2.fromOffset(8, 6)
+			HeaderIcon.Size = UDim2.fromOffset(13, 13)
+			HeaderIcon.Position = UDim2.fromOffset(7, 4)
 			HeaderIcon.BackgroundTransparency = 1
 			HeaderIcon.BorderSizePixel = 0
 			HeaderIcon.ZIndex = 5
@@ -4176,12 +4178,12 @@ setVisible = function(isVisible)
 			if _IconAssetId then HeaderIcon.Image = _IconAssetId end
 
 			local TitleLbl = Instance.new("TextLabel")
-			TitleLbl.Size = UDim2.new(1, -91, 0, 20)
-			TitleLbl.Position = UDim2.fromOffset(29, 4)
+			TitleLbl.Size = UDim2.new(1, -76, 0, 16)
+			TitleLbl.Position = UDim2.fromOffset(24, 3)
 			TitleLbl.BackgroundTransparency = 1
 			TitleLbl.Text = tostring(title or "")
 			TitleLbl.Font = Enum.Font.Code
-			TitleLbl.TextSize = 13
+			TitleLbl.TextSize = 10
 			TitleLbl.TextTruncate = Enum.TextTruncate.AtEnd
 			TitleLbl.TextXAlignment = Enum.TextXAlignment.Left
 			TitleLbl.TextColor3 = C_TEXT
@@ -4190,13 +4192,13 @@ setVisible = function(isVisible)
 			table.insert(ThemeListeners, { type = "text_main", obj = TitleLbl })
 
 			local ByLabel = Instance.new("TextLabel")
-			ByLabel.Size = UDim2.fromOffset(57, 12)
+			ByLabel.Size = UDim2.fromOffset(49, 10)
 			ByLabel.AnchorPoint = Vector2.new(1, 0.5)
-			ByLabel.Position = UDim2.new(1, -8, 0, 15)
+			ByLabel.Position = UDim2.new(1, -7, 0, 11)
 			ByLabel.BackgroundTransparency = 1
 			ByLabel.Text = "by HertaIX"
 			ByLabel.Font = Enum.Font.Code
-			ByLabel.TextSize = 7
+			ByLabel.TextSize = 6
 			ByLabel.TextTransparency = 0.45
 			ByLabel.TextXAlignment = Enum.TextXAlignment.Right
 			ByLabel.TextColor3 = C_ACCENT_LT
@@ -4207,7 +4209,7 @@ setVisible = function(isVisible)
 			local HeaderLine = Instance.new("Frame")
 			HeaderLine.Name = "HeaderLine"
 			HeaderLine.Size = UDim2.new(1, -13, 0, 1)
-			HeaderLine.Position = UDim2.fromOffset(7, 27)
+			HeaderLine.Position = UDim2.fromOffset(7, 20)
 			HeaderLine.BorderSizePixel = 0
 			HeaderLine.BackgroundColor3 = C_ACCENT
 			HeaderLine.ZIndex = 5
@@ -4226,7 +4228,7 @@ setVisible = function(isVisible)
 			local CenterMark = Instance.new("Frame")
 			CenterMark.Size = UDim2.fromOffset(26, 2)
 			CenterMark.AnchorPoint = Vector2.new(0.5, 0)
-			CenterMark.Position = UDim2.new(0.5, 0, 0, 27)
+			CenterMark.Position = UDim2.new(0.5, 0, 0, 20)
 			CenterMark.BorderSizePixel = 0
 			CenterMark.BackgroundColor3 = C_ACCENT_LT
 			CenterMark.ZIndex = 6
@@ -4243,12 +4245,12 @@ setVisible = function(isVisible)
 			MarkGradient.Parent = CenterMark
 
 			local DescriptionLabel = Instance.new("TextLabel")
-			DescriptionLabel.Size = UDim2.new(1, -16, 1, -41)
-			DescriptionLabel.Position = UDim2.fromOffset(8, 35)
+			DescriptionLabel.Size = UDim2.new(1, -16, 1, -28)
+			DescriptionLabel.Position = UDim2.fromOffset(8, 25)
 			DescriptionLabel.BackgroundTransparency = 1
 			DescriptionLabel.Text = tostring(message or "")
 			DescriptionLabel.Font = Enum.Font.Code
-			DescriptionLabel.TextSize = 9
+			DescriptionLabel.TextSize = 7
 			DescriptionLabel.TextWrapped = true
 			DescriptionLabel.TextXAlignment = Enum.TextXAlignment.Left
 			DescriptionLabel.TextYAlignment = Enum.TextYAlignment.Top
@@ -4287,8 +4289,8 @@ setVisible = function(isVisible)
 		--  Window:NotifyImportant(title, message)
 		--  明るい赤色固定の縮小メインUI。ok操作でのみ消去する。
 		-- ----------------------------------------------------------
-		local IMPORTANT_W = 230
-		local IMPORTANT_H = 104
+		local IMPORTANT_W = 200
+		local IMPORTANT_H = 64
 		local _ImportantStack = {}
 
 		local function _RealignImportant()
@@ -4315,7 +4317,7 @@ setVisible = function(isVisible)
 			Frame.Size = UDim2.fromOffset(IMPORTANT_W, IMPORTANT_H)
 			Frame.Position = UDim2.new(0, -IMPORTANT_W, 1, -NOTIFY_BOTTOM)
 			Frame.BackgroundColor3 = RED_MAIN
-			Frame.BackgroundTransparency = 0.70
+			Frame.BackgroundTransparency = 0.52
 			Frame.BorderSizePixel = 0
 			Frame.ClipsDescendants = false
 			Frame.Parent = self._ScreenGui
@@ -4362,7 +4364,7 @@ setVisible = function(isVisible)
 			TitleLbl.BackgroundTransparency = 1
 			TitleLbl.Text = tostring(title or "")
 			TitleLbl.Font = Enum.Font.Code
-			TitleLbl.TextSize = 13
+			TitleLbl.TextSize = 11
 			TitleLbl.TextTruncate = Enum.TextTruncate.AtEnd
 			TitleLbl.TextXAlignment = Enum.TextXAlignment.Left
 			TitleLbl.TextColor3 = RED_LT
@@ -4386,7 +4388,7 @@ setVisible = function(isVisible)
 			local HeaderLine = Instance.new("Frame")
 			HeaderLine.Name = "HeaderLine"
 			HeaderLine.Size = UDim2.new(1, -13, 0, 1)
-			HeaderLine.Position = UDim2.fromOffset(7, 27)
+			HeaderLine.Position = UDim2.fromOffset(7, 21)
 			HeaderLine.BorderSizePixel = 0
 			HeaderLine.BackgroundColor3 = RED_ACCENT
 			HeaderLine.ZIndex = 5
@@ -4404,7 +4406,7 @@ setVisible = function(isVisible)
 			local CenterMark = Instance.new("Frame")
 			CenterMark.Size = UDim2.fromOffset(26, 2)
 			CenterMark.AnchorPoint = Vector2.new(0.5, 0)
-			CenterMark.Position = UDim2.new(0.5, 0, 0, 27)
+			CenterMark.Position = UDim2.new(0.5, 0, 0, 21)
 			CenterMark.BorderSizePixel = 0
 			CenterMark.BackgroundColor3 = RED_LT
 			CenterMark.ZIndex = 6
@@ -4420,8 +4422,8 @@ setVisible = function(isVisible)
 			MarkGradient.Parent = CenterMark
 
 			local DescriptionLabel = Instance.new("TextLabel")
-			DescriptionLabel.Size = UDim2.new(1, -60, 1, -42)
-			DescriptionLabel.Position = UDim2.fromOffset(8, 35)
+			DescriptionLabel.Size = UDim2.new(1, -51, 1, -34)
+			DescriptionLabel.Position = UDim2.fromOffset(8, 27)
 			DescriptionLabel.BackgroundTransparency = 1
 			DescriptionLabel.Text = tostring(message or "")
 			DescriptionLabel.Font = Enum.Font.Code
@@ -4434,9 +4436,9 @@ setVisible = function(isVisible)
 			DescriptionLabel.Parent = Frame
 
 			local OKBtn = Instance.new("TextButton")
-			OKBtn.Size = UDim2.fromOffset(35, 16)
+			OKBtn.Size = UDim2.fromOffset(30, 14)
 			OKBtn.AnchorPoint = Vector2.new(1, 1)
-			OKBtn.Position = UDim2.new(1, -8, 1, -7)
+			OKBtn.Position = UDim2.new(1, -7, 1, -5)
 			OKBtn.BackgroundColor3 = RED_MAIN
 			OKBtn.BackgroundTransparency = 0.28
 			OKBtn.BorderSizePixel = 0
