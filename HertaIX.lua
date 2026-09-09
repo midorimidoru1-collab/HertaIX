@@ -187,6 +187,10 @@ local function ApplyTheme(name)
 		elseif entry.type == "mainbg" then
 			obj.BackgroundColor3 = T.mainBg
 			obj.BackgroundTransparency = T.mainAlpha
+		elseif entry.type == "notification_mainbg" then
+			-- 通知はメインGUIの縮小版として明度を高めに保つ。
+			obj.BackgroundColor3 = T.mainBg
+			obj.BackgroundTransparency = 0.78
 		elseif entry.type == "text_accent" then
 			obj.TextColor3 = C_ACCENT
 		elseif entry.type == "text_lt" then
@@ -241,10 +245,13 @@ local function ApplyTheme(name)
 						or t=="sweep" or t=="dataline"
 						or t=="track" or t=="knob" then
 						obj2.BackgroundColor3 = col
-					elseif t=="mainbg" then
-						obj2.BackgroundColor3 = col
-						obj2.BackgroundTransparency = mainAlpha
-					elseif t=="text_accent" or t=="text_lt"
+						elseif t=="mainbg" then
+							obj2.BackgroundColor3 = col
+							obj2.BackgroundTransparency = mainAlpha
+						elseif t=="notification_mainbg" then
+							obj2.BackgroundColor3 = col
+							obj2.BackgroundTransparency = 0.78
+						elseif t=="text_accent" or t=="text_lt"
 						or t=="text_mid" or t=="text_main"
 						or t=="text_dark" then
 						obj2.TextColor3 = col
@@ -4005,11 +4012,11 @@ setVisible = function(isVisible)
 
 		-- ----------------------------------------------------------
 		--  通知スタック管理
-		--  丸角を使わず、メインGUIと同じL字コーナー／ヘッダーラインで統一する。
+		--  メインHertaIXウィンドウを縮小した構造を使用する。
 		-- ----------------------------------------------------------
 		local _NotifyStack = {}
-		local NOTIFY_W = 190
-		local NOTIFY_H = 62
+		local NOTIFY_W = 220
+		local NOTIFY_H = 96
 		local NOTIFY_GAP = 5
 		local NOTIFY_RIGHT = 7
 		local NOTIFY_BOTTOM = 7
@@ -4027,9 +4034,96 @@ setVisible = function(isVisible)
 			end
 		end
 
+		-- 通知の背景へ、メインUIと同じ走査線・スイープ・データストリームを追加する。
+		-- colorTypeを指定するとテーマ追従、指定しない場合は渡した固定色を使用する。
+		local function AddMiniMainEffects(frame, screenGui, effectHeight, colorType, accent, accentLt, accentMid)
+			local ScanLayer = Instance.new("Frame")
+			ScanLayer.Name = "ScanLayer"
+			ScanLayer.Size = UDim2.fromScale(1, 1)
+			ScanLayer.BackgroundTransparency = 1
+			ScanLayer.ClipsDescendants = true
+			ScanLayer.Parent = frame
+
+			for y = 0, effectHeight, 4 do
+				local Scan = Instance.new("Frame")
+				Scan.BorderSizePixel = 0
+				Scan.Size = UDim2.new(1, 0, 0, 1)
+				Scan.Position = UDim2.fromOffset(0, y)
+				Scan.BackgroundColor3 = accent
+				Scan.BackgroundTransparency = 0.82
+				Scan.Parent = ScanLayer
+				if colorType then table.insert(ThemeListeners, { type = "scanline", obj = Scan }) end
+			end
+
+			local Sweep = Instance.new("Frame")
+			Sweep.Name = "Sweep"
+			Sweep.BorderSizePixel = 0
+			Sweep.Size = UDim2.new(1, 0, 0, 13)
+			Sweep.Position = UDim2.fromOffset(0, -13)
+			Sweep.BackgroundColor3 = accentLt
+			Sweep.BackgroundTransparency = 0.70
+			Sweep.Parent = ScanLayer
+			if colorType then table.insert(ThemeListeners, { type = "sweep", obj = Sweep }) end
+
+			task.spawn(function()
+				while frame.Parent and screenGui.Parent do
+					Sweep.Position = UDim2.fromOffset(0, -13)
+					local tween = TweenService:Create(
+						Sweep,
+						TweenInfo.new(2.2, Enum.EasingStyle.Linear),
+						{ Position = UDim2.new(0, 0, 1, 13) }
+					)
+					tween:Play()
+					tween.Completed:Wait()
+					task.wait(0.35)
+				end
+			end)
+
+			local DataLayer = Instance.new("Frame")
+			DataLayer.Name = "DataLayer"
+			DataLayer.Size = UDim2.fromScale(1, 1)
+			DataLayer.BackgroundTransparency = 1
+			DataLayer.ClipsDescendants = true
+			DataLayer.Parent = frame
+
+			task.spawn(function()
+				while frame.Parent and screenGui.Parent do
+					local length = math.random(14, 35)
+					local Line = Instance.new("Frame")
+					Line.BorderSizePixel = 0
+					Line.Size = UDim2.fromOffset(length, 1)
+					Line.Position = UDim2.new(0, -length, 0, math.random(35, effectHeight - 8))
+					Line.BackgroundColor3 = accentMid
+					Line.BackgroundTransparency = 0.28
+					Line.Parent = DataLayer
+					if colorType then table.insert(ThemeListeners, { type = "dataline", obj = Line }) end
+
+					local gradient = Instance.new("UIGradient")
+					gradient.Transparency = NumberSequence.new{
+						NumberSequenceKeypoint.new(0, 1),
+						NumberSequenceKeypoint.new(0.25, 0),
+						NumberSequenceKeypoint.new(0.75, 0),
+						NumberSequenceKeypoint.new(1, 1),
+					}
+					gradient.Parent = Line
+
+					local tween = TweenService:Create(
+						Line,
+						TweenInfo.new(math.random(13, 20) / 10, Enum.EasingStyle.Linear),
+						{ Position = UDim2.new(0, NOTIFY_W + length, 0, Line.Position.Y.Offset) }
+					)
+					tween.Completed:Connect(function()
+						if Line.Parent then Line:Destroy() end
+					end)
+					tween:Play()
+					task.wait(0.34)
+				end
+			end)
+		end
+
 		-- ----------------------------------------------------------
 		--  Window:Notify(title, message, duration)
-		--  テーマ追従のミニHertaIXウィンドウ。タイトルと本文をラインで分離。
+		--  明るいテーマ追従型の縮小メインUI。タイトル／説明はヘッダーラインで分離。
 		-- ----------------------------------------------------------
 		function Window:Notify(title, message, duration)
 			duration = duration or 3
@@ -4038,69 +4132,128 @@ setVisible = function(isVisible)
 			Notification.Name = "HertaIXNotification"
 			Notification.Size = UDim2.fromOffset(NOTIFY_W, NOTIFY_H)
 			Notification.Position = UDim2.new(1, NOTIFY_RIGHT, 1, -NOTIFY_BOTTOM)
-			Notification.BackgroundColor3 = C_BG
-			Notification.BackgroundTransparency = 0.22
+			Notification.BackgroundColor3 = C_ACCENT
+			Notification.BackgroundTransparency = 0.70
 			Notification.BorderSizePixel = 0
 			Notification.ClipsDescendants = false
 			Notification.Parent = self._ScreenGui
-			table.insert(ThemeListeners, { type = "bg", obj = Notification })
+			table.insert(ThemeListeners, { type = "notification_mainbg", obj = Notification })
 
-			local Stroke = Instance.new("UIStroke")
-			Stroke.Color = C_ACCENT
-			Stroke.Thickness = 1
-			Stroke.Transparency = 0.35
-			Stroke.Parent = Notification
-			table.insert(ThemeListeners, { type = "stroke", obj = Stroke })
+			local OuterStroke = Instance.new("UIStroke")
+			OuterStroke.Color = C_ACCENT
+			OuterStroke.Thickness = 2
+			OuterStroke.Parent = Notification
+			table.insert(ThemeListeners, { type = "stroke", obj = OuterStroke })
+
+			local Inner = Instance.new("Frame")
+			Inner.Name = "Inner"
+			Inner.Size = UDim2.new(1, -8, 1, -8)
+			Inner.Position = UDim2.fromOffset(4, 4)
+			Inner.BackgroundTransparency = 1
+			Inner.BorderSizePixel = 0
+			Inner.Parent = Notification
+
+			local InnerStroke = Instance.new("UIStroke")
+			InnerStroke.Color = C_ACCENT_MID
+			InnerStroke.Thickness = 1
+			InnerStroke.Transparency = 0.18
+			InnerStroke.Parent = Inner
+			table.insert(ThemeListeners, { type = "stroke", obj = InnerStroke })
 
 			MakeCorner(Notification, 0, 0)
 			MakeCorner(Notification, 1, 0)
 			MakeCorner(Notification, 0, 1)
 			MakeCorner(Notification, 1, 1)
+			AddMiniMainEffects(Notification, self._ScreenGui, NOTIFY_H, true, C_ACCENT, C_ACCENT_LT, C_ACCENT_MID)
 
-			local HeaderLine = Instance.new("Frame")
-			HeaderLine.Size = UDim2.new(1, -8, 0, 1)
-			HeaderLine.Position = UDim2.fromOffset(4, 21)
-			HeaderLine.BorderSizePixel = 0
-			HeaderLine.BackgroundColor3 = C_ACCENT
-			HeaderLine.Parent = Notification
-			table.insert(ThemeListeners, { type = "headerline", obj = HeaderLine })
-
-			local HeaderTag = Instance.new("TextLabel")
-			HeaderTag.Size = UDim2.fromOffset(44, 15)
-			HeaderTag.Position = UDim2.fromOffset(6, 4)
-			HeaderTag.BackgroundTransparency = 1
-			HeaderTag.Text = "NOTICE"
-			HeaderTag.Font = Enum.Font.Code
-			HeaderTag.TextSize = 7
-			HeaderTag.TextXAlignment = Enum.TextXAlignment.Left
-			HeaderTag.TextColor3 = C_ACCENT_MID
-			HeaderTag.Parent = Notification
-			table.insert(ThemeListeners, { type = "text_mid", obj = HeaderTag })
+			local HeaderIcon = Instance.new("ImageLabel")
+			HeaderIcon.Size = UDim2.fromOffset(17, 17)
+			HeaderIcon.Position = UDim2.fromOffset(8, 6)
+			HeaderIcon.BackgroundTransparency = 1
+			HeaderIcon.BorderSizePixel = 0
+			HeaderIcon.ZIndex = 5
+			HeaderIcon.Parent = Notification
+			if _IconAssetId then HeaderIcon.Image = _IconAssetId end
 
 			local TitleLbl = Instance.new("TextLabel")
-			TitleLbl.Size = UDim2.new(1, -58, 0, 17)
-			TitleLbl.Position = UDim2.fromOffset(49, 3)
+			TitleLbl.Size = UDim2.new(1, -91, 0, 20)
+			TitleLbl.Position = UDim2.fromOffset(29, 4)
 			TitleLbl.BackgroundTransparency = 1
 			TitleLbl.Text = tostring(title or "")
 			TitleLbl.Font = Enum.Font.Code
-			TitleLbl.TextSize = 11
+			TitleLbl.TextSize = 13
 			TitleLbl.TextTruncate = Enum.TextTruncate.AtEnd
 			TitleLbl.TextXAlignment = Enum.TextXAlignment.Left
-			TitleLbl.TextColor3 = C_ACCENT_LT
+			TitleLbl.TextColor3 = C_TEXT
+			TitleLbl.ZIndex = 5
 			TitleLbl.Parent = Notification
-			table.insert(ThemeListeners, { type = "text_lt", obj = TitleLbl })
+			table.insert(ThemeListeners, { type = "text_main", obj = TitleLbl })
+
+			local ByLabel = Instance.new("TextLabel")
+			ByLabel.Size = UDim2.fromOffset(57, 12)
+			ByLabel.AnchorPoint = Vector2.new(1, 0.5)
+			ByLabel.Position = UDim2.new(1, -8, 0, 15)
+			ByLabel.BackgroundTransparency = 1
+			ByLabel.Text = "by HertaIX"
+			ByLabel.Font = Enum.Font.Code
+			ByLabel.TextSize = 7
+			ByLabel.TextTransparency = 0.45
+			ByLabel.TextXAlignment = Enum.TextXAlignment.Right
+			ByLabel.TextColor3 = C_ACCENT_LT
+			ByLabel.ZIndex = 5
+			ByLabel.Parent = Notification
+			table.insert(ThemeListeners, { type = "text_lt", obj = ByLabel })
+
+			local HeaderLine = Instance.new("Frame")
+			HeaderLine.Name = "HeaderLine"
+			HeaderLine.Size = UDim2.new(1, -13, 0, 1)
+			HeaderLine.Position = UDim2.fromOffset(7, 27)
+			HeaderLine.BorderSizePixel = 0
+			HeaderLine.BackgroundColor3 = C_ACCENT
+			HeaderLine.ZIndex = 5
+			HeaderLine.Parent = Notification
+			table.insert(ThemeListeners, { type = "headerline", obj = HeaderLine })
+
+			local HeaderGradient = Instance.new("UIGradient")
+			HeaderGradient.Transparency = NumberSequence.new{
+				NumberSequenceKeypoint.new(0, 1),
+				NumberSequenceKeypoint.new(0.15, 0),
+				NumberSequenceKeypoint.new(0.85, 0),
+				NumberSequenceKeypoint.new(1, 1),
+			}
+			HeaderGradient.Parent = HeaderLine
+
+			local CenterMark = Instance.new("Frame")
+			CenterMark.Size = UDim2.fromOffset(26, 2)
+			CenterMark.AnchorPoint = Vector2.new(0.5, 0)
+			CenterMark.Position = UDim2.new(0.5, 0, 0, 27)
+			CenterMark.BorderSizePixel = 0
+			CenterMark.BackgroundColor3 = C_ACCENT_LT
+			CenterMark.ZIndex = 6
+			CenterMark.Parent = Notification
+			table.insert(ThemeListeners, { type = "sweep", obj = CenterMark })
+
+			local MarkGradient = Instance.new("UIGradient")
+			MarkGradient.Transparency = NumberSequence.new{
+				NumberSequenceKeypoint.new(0, 1),
+				NumberSequenceKeypoint.new(0.20, 0),
+				NumberSequenceKeypoint.new(0.80, 0),
+				NumberSequenceKeypoint.new(1, 1),
+			}
+			MarkGradient.Parent = CenterMark
 
 			local DescriptionLabel = Instance.new("TextLabel")
-			DescriptionLabel.Size = UDim2.new(1, -14, 0, 31)
-			DescriptionLabel.Position = UDim2.fromOffset(7, 26)
+			DescriptionLabel.Size = UDim2.new(1, -16, 1, -41)
+			DescriptionLabel.Position = UDim2.fromOffset(8, 35)
 			DescriptionLabel.BackgroundTransparency = 1
 			DescriptionLabel.Text = tostring(message or "")
 			DescriptionLabel.Font = Enum.Font.Code
-			DescriptionLabel.TextSize = 8
+			DescriptionLabel.TextSize = 9
 			DescriptionLabel.TextWrapped = true
 			DescriptionLabel.TextXAlignment = Enum.TextXAlignment.Left
 			DescriptionLabel.TextYAlignment = Enum.TextYAlignment.Top
 			DescriptionLabel.TextColor3 = C_ACCENT_MID
+			DescriptionLabel.ZIndex = 5
 			DescriptionLabel.Parent = Notification
 			table.insert(ThemeListeners, { type = "text_mid", obj = DescriptionLabel })
 
@@ -4132,10 +4285,10 @@ setVisible = function(isVisible)
 
 		-- ----------------------------------------------------------
 		--  Window:NotifyImportant(title, message)
-		--  赤色固定のミニHertaIXウィンドウ。ok操作でのみ消去する。
+		--  明るい赤色固定の縮小メインUI。ok操作でのみ消去する。
 		-- ----------------------------------------------------------
-		local IMPORTANT_W = 210
-		local IMPORTANT_H = 70
+		local IMPORTANT_W = 230
+		local IMPORTANT_H = 104
 		local _ImportantStack = {}
 
 		local function _RealignImportant()
@@ -4152,105 +4305,151 @@ setVisible = function(isVisible)
 		end
 
 		function Window:NotifyImportant(title, message)
-			local RED_BG = Color3.fromRGB(60, 8, 8)
-			local RED_ACCENT = Color3.fromRGB(220, 50, 50)
-			local RED_LT = Color3.fromRGB(255, 145, 145)
-			local RED_MID = Color3.fromRGB(205, 85, 85)
+			local RED_MAIN = Color3.fromRGB(255, 70, 70)
+			local RED_ACCENT = Color3.fromRGB(255, 105, 105)
+			local RED_LT = Color3.fromRGB(255, 225, 225)
+			local RED_MID = Color3.fromRGB(255, 175, 175)
 
 			local Frame = Instance.new("Frame")
 			Frame.Name = "HertaIXImportantNotification"
 			Frame.Size = UDim2.fromOffset(IMPORTANT_W, IMPORTANT_H)
 			Frame.Position = UDim2.new(0, -IMPORTANT_W, 1, -NOTIFY_BOTTOM)
-			Frame.BackgroundColor3 = RED_BG
-			Frame.BackgroundTransparency = 0.12
+			Frame.BackgroundColor3 = RED_MAIN
+			Frame.BackgroundTransparency = 0.70
 			Frame.BorderSizePixel = 0
 			Frame.ClipsDescendants = false
 			Frame.Parent = self._ScreenGui
 
-			local Stroke = Instance.new("UIStroke")
-			Stroke.Color = RED_ACCENT
-			Stroke.Thickness = 1
-			Stroke.Transparency = 0.15
-			Stroke.Parent = Frame
+			local OuterStroke = Instance.new("UIStroke")
+			OuterStroke.Color = RED_ACCENT
+			OuterStroke.Thickness = 2
+			OuterStroke.Parent = Frame
+
+			local Inner = Instance.new("Frame")
+			Inner.Name = "Inner"
+			Inner.Size = UDim2.new(1, -8, 1, -8)
+			Inner.Position = UDim2.fromOffset(4, 4)
+			Inner.BackgroundTransparency = 1
+			Inner.BorderSizePixel = 0
+			Inner.Parent = Frame
+
+			local InnerStroke = Instance.new("UIStroke")
+			InnerStroke.Color = RED_MID
+			InnerStroke.Thickness = 1
+			InnerStroke.Transparency = 0.12
+			InnerStroke.Parent = Inner
 
 			MakeStaticCorner(Frame, 0, 0, RED_ACCENT)
 			MakeStaticCorner(Frame, 1, 0, RED_ACCENT)
 			MakeStaticCorner(Frame, 0, 1, RED_ACCENT)
 			MakeStaticCorner(Frame, 1, 1, RED_ACCENT)
+			AddMiniMainEffects(Frame, self._ScreenGui, IMPORTANT_H, false, RED_ACCENT, RED_LT, RED_MID)
 
-			local HeaderLine = Instance.new("Frame")
-			HeaderLine.Size = UDim2.new(1, -8, 0, 1)
-			HeaderLine.Position = UDim2.fromOffset(4, 23)
-			HeaderLine.BorderSizePixel = 0
-			HeaderLine.BackgroundColor3 = RED_ACCENT
-			HeaderLine.Parent = Frame
-
-			local AlertTag = Instance.new("TextLabel")
-			AlertTag.Size = UDim2.fromOffset(21, 16)
-			AlertTag.Position = UDim2.fromOffset(7, 4)
-			AlertTag.BackgroundTransparency = 1
-			AlertTag.Text = "[!]"
-			AlertTag.Font = Enum.Font.Code
-			AlertTag.TextSize = 9
-			AlertTag.TextXAlignment = Enum.TextXAlignment.Left
-			AlertTag.TextColor3 = RED_LT
-			AlertTag.Parent = Frame
+			local AlertIcon = Instance.new("TextLabel")
+			AlertIcon.Size = UDim2.fromOffset(17, 17)
+			AlertIcon.Position = UDim2.fromOffset(8, 6)
+			AlertIcon.BackgroundTransparency = 1
+			AlertIcon.Text = "[!]"
+			AlertIcon.Font = Enum.Font.Code
+			AlertIcon.TextSize = 8
+			AlertIcon.TextColor3 = RED_LT
+			AlertIcon.ZIndex = 5
+			AlertIcon.Parent = Frame
 
 			local TitleLbl = Instance.new("TextLabel")
-			TitleLbl.Size = UDim2.new(1, -91, 0, 18)
-			TitleLbl.Position = UDim2.fromOffset(29, 3)
+			TitleLbl.Size = UDim2.new(1, -102, 0, 20)
+			TitleLbl.Position = UDim2.fromOffset(29, 4)
 			TitleLbl.BackgroundTransparency = 1
 			TitleLbl.Text = tostring(title or "")
 			TitleLbl.Font = Enum.Font.Code
-			TitleLbl.TextSize = 11
+			TitleLbl.TextSize = 13
 			TitleLbl.TextTruncate = Enum.TextTruncate.AtEnd
 			TitleLbl.TextXAlignment = Enum.TextXAlignment.Left
 			TitleLbl.TextColor3 = RED_LT
+			TitleLbl.ZIndex = 5
 			TitleLbl.Parent = Frame
 
-			local HeaderTag = Instance.new("TextLabel")
-			HeaderTag.Size = UDim2.fromOffset(55, 15)
-			HeaderTag.AnchorPoint = Vector2.new(1, 0)
-			HeaderTag.Position = UDim2.new(1, -7, 0, 5)
-			HeaderTag.BackgroundTransparency = 1
-			HeaderTag.Text = "IMPORTANT"
-			HeaderTag.Font = Enum.Font.Code
-			HeaderTag.TextSize = 7
-			HeaderTag.TextXAlignment = Enum.TextXAlignment.Right
-			HeaderTag.TextColor3 = RED_MID
-			HeaderTag.Parent = Frame
+			local ByLabel = Instance.new("TextLabel")
+			ByLabel.Size = UDim2.fromOffset(68, 12)
+			ByLabel.AnchorPoint = Vector2.new(1, 0.5)
+			ByLabel.Position = UDim2.new(1, -8, 0, 15)
+			ByLabel.BackgroundTransparency = 1
+			ByLabel.Text = "IMPORTANT"
+			ByLabel.Font = Enum.Font.Code
+			ByLabel.TextSize = 7
+			ByLabel.TextTransparency = 0.32
+			ByLabel.TextXAlignment = Enum.TextXAlignment.Right
+			ByLabel.TextColor3 = RED_LT
+			ByLabel.ZIndex = 5
+			ByLabel.Parent = Frame
+
+			local HeaderLine = Instance.new("Frame")
+			HeaderLine.Name = "HeaderLine"
+			HeaderLine.Size = UDim2.new(1, -13, 0, 1)
+			HeaderLine.Position = UDim2.fromOffset(7, 27)
+			HeaderLine.BorderSizePixel = 0
+			HeaderLine.BackgroundColor3 = RED_ACCENT
+			HeaderLine.ZIndex = 5
+			HeaderLine.Parent = Frame
+
+			local HeaderGradient = Instance.new("UIGradient")
+			HeaderGradient.Transparency = NumberSequence.new{
+				NumberSequenceKeypoint.new(0, 1),
+				NumberSequenceKeypoint.new(0.15, 0),
+				NumberSequenceKeypoint.new(0.85, 0),
+				NumberSequenceKeypoint.new(1, 1),
+			}
+			HeaderGradient.Parent = HeaderLine
+
+			local CenterMark = Instance.new("Frame")
+			CenterMark.Size = UDim2.fromOffset(26, 2)
+			CenterMark.AnchorPoint = Vector2.new(0.5, 0)
+			CenterMark.Position = UDim2.new(0.5, 0, 0, 27)
+			CenterMark.BorderSizePixel = 0
+			CenterMark.BackgroundColor3 = RED_LT
+			CenterMark.ZIndex = 6
+			CenterMark.Parent = Frame
+
+			local MarkGradient = Instance.new("UIGradient")
+			MarkGradient.Transparency = NumberSequence.new{
+				NumberSequenceKeypoint.new(0, 1),
+				NumberSequenceKeypoint.new(0.20, 0),
+				NumberSequenceKeypoint.new(0.80, 0),
+				NumberSequenceKeypoint.new(1, 1),
+			}
+			MarkGradient.Parent = CenterMark
 
 			local DescriptionLabel = Instance.new("TextLabel")
-			DescriptionLabel.Size = UDim2.new(1, -52, 0, 36)
-			DescriptionLabel.Position = UDim2.fromOffset(7, 29)
+			DescriptionLabel.Size = UDim2.new(1, -60, 1, -42)
+			DescriptionLabel.Position = UDim2.fromOffset(8, 35)
 			DescriptionLabel.BackgroundTransparency = 1
 			DescriptionLabel.Text = tostring(message or "")
 			DescriptionLabel.Font = Enum.Font.Code
-			DescriptionLabel.TextSize = 8
+			DescriptionLabel.TextSize = 9
 			DescriptionLabel.TextWrapped = true
 			DescriptionLabel.TextXAlignment = Enum.TextXAlignment.Left
 			DescriptionLabel.TextYAlignment = Enum.TextYAlignment.Top
 			DescriptionLabel.TextColor3 = RED_MID
+			DescriptionLabel.ZIndex = 5
 			DescriptionLabel.Parent = Frame
 
 			local OKBtn = Instance.new("TextButton")
-			OKBtn.Size = UDim2.fromOffset(34, 15)
+			OKBtn.Size = UDim2.fromOffset(35, 16)
 			OKBtn.AnchorPoint = Vector2.new(1, 1)
-			OKBtn.Position = UDim2.new(1, -7, 1, -6)
-			OKBtn.BackgroundColor3 = RED_BG
-			OKBtn.BackgroundTransparency = 0.02
+			OKBtn.Position = UDim2.new(1, -8, 1, -7)
+			OKBtn.BackgroundColor3 = RED_MAIN
+			OKBtn.BackgroundTransparency = 0.28
 			OKBtn.BorderSizePixel = 0
 			OKBtn.Text = "ok"
 			OKBtn.Font = Enum.Font.Code
 			OKBtn.TextSize = 9
 			OKBtn.TextColor3 = RED_LT
-			OKBtn.ZIndex = 2
+			OKBtn.ZIndex = 8
 			OKBtn.Parent = Frame
 
 			local OKStroke = Instance.new("UIStroke")
 			OKStroke.Color = RED_ACCENT
 			OKStroke.Thickness = 1
-			OKStroke.Transparency = 0.2
 			OKStroke.Parent = OKBtn
 			MakeStaticCorner(OKBtn, 0, 0, RED_ACCENT)
 			MakeStaticCorner(OKBtn, 1, 0, RED_ACCENT)
