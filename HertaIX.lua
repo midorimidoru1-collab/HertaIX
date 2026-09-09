@@ -191,7 +191,7 @@ local function ApplyTheme(name)
 			-- 暗い水色系の通知背景。テーマ背景色にaccentを30%混ぜ、
 			-- 透明度を上げて重く見えない明るさを確保する。
 			obj.BackgroundColor3 = T.bg:Lerp(T.accent, 0.30)
-			obj.BackgroundTransparency = 0.52
+			obj.BackgroundTransparency = 0.75
 		elseif entry.type == "text_accent" then
 			obj.TextColor3 = C_ACCENT
 		elseif entry.type == "text_lt" then
@@ -252,7 +252,7 @@ local function ApplyTheme(name)
 						elseif t=="notification_bg" then
 							-- rainbowテーマでも背景は黒トーンを維持する。
 							obj2.BackgroundColor3 = C_BG
-							obj2.BackgroundTransparency = 0.52
+							obj2.BackgroundTransparency = 0.75
 						elseif t=="text_accent" or t=="text_lt"
 						or t=="text_mid" or t=="text_main"
 						or t=="text_dark" then
@@ -343,6 +343,56 @@ local function MakeStaticCorner(parent, xScale, yScale, color)
 	V.Position = UDim2.new(
 		xScale, xScale == 1 and -2 or 0,
 		yScale, yScale == 1 and -23 or 0
+	)
+	V.BackgroundColor3 = color
+	V.ZIndex = (parent.ZIndex or 1) + 1
+	V.Parent = parent
+end
+
+-- 通知専用の細いL字コーナー。小さい通知内でメインGUI用の23px装飾を使わない。
+local function MakeMiniCorner(parent, xScale, yScale)
+	local H = Instance.new("Frame")
+	H.BorderSizePixel = 0
+	H.Size = UDim2.fromOffset(11, 1)
+	H.Position = UDim2.new(
+		xScale, xScale == 1 and -11 or 0,
+		yScale, yScale == 1 and -1 or 0
+	)
+	H.BackgroundColor3 = C_ACCENT
+	H.Parent = parent
+	table.insert(ThemeListeners, { type = "corner_h", obj = H })
+
+	local V = Instance.new("Frame")
+	V.BorderSizePixel = 0
+	V.Size = UDim2.fromOffset(1, 11)
+	V.Position = UDim2.new(
+		xScale, xScale == 1 and -1 or 0,
+		yScale, yScale == 1 and -11 or 0
+	)
+	V.BackgroundColor3 = C_ACCENT
+	V.Parent = parent
+	table.insert(ThemeListeners, { type = "corner_v", obj = V })
+end
+
+-- 重要通知用の固定赤色ミニL字コーナー。
+local function MakeStaticMiniCorner(parent, xScale, yScale, color)
+	local H = Instance.new("Frame")
+	H.BorderSizePixel = 0
+	H.Size = UDim2.fromOffset(11, 1)
+	H.Position = UDim2.new(
+		xScale, xScale == 1 and -11 or 0,
+		yScale, yScale == 1 and -1 or 0
+	)
+	H.BackgroundColor3 = color
+	H.ZIndex = (parent.ZIndex or 1) + 1
+	H.Parent = parent
+
+	local V = Instance.new("Frame")
+	V.BorderSizePixel = 0
+	V.Size = UDim2.fromOffset(1, 11)
+	V.Position = UDim2.new(
+		xScale, xScale == 1 and -1 or 0,
+		yScale, yScale == 1 and -11 or 0
 	)
 	V.BackgroundColor3 = color
 	V.ZIndex = (parent.ZIndex or 1) + 1
@@ -4135,7 +4185,7 @@ setVisible = function(isVisible)
 			Notification.Size = UDim2.fromOffset(NOTIFY_W, NOTIFY_H)
 			Notification.Position = UDim2.new(1, NOTIFY_RIGHT, 1, -NOTIFY_BOTTOM)
 			Notification.BackgroundColor3 = C_BG:Lerp(C_ACCENT, 0.30)
-			Notification.BackgroundTransparency = 0.52
+			Notification.BackgroundTransparency = 0.75
 			Notification.BorderSizePixel = 0
 			Notification.ClipsDescendants = false
 			Notification.Parent = self._ScreenGui
@@ -4162,10 +4212,10 @@ setVisible = function(isVisible)
 			InnerStroke.Parent = Inner
 			table.insert(ThemeListeners, { type = "stroke", obj = InnerStroke })
 
-			MakeCorner(Notification, 0, 0)
-			MakeCorner(Notification, 1, 0)
-			MakeCorner(Notification, 0, 1)
-			MakeCorner(Notification, 1, 1)
+			MakeMiniCorner(Notification, 0, 0)
+			MakeMiniCorner(Notification, 1, 0)
+			MakeMiniCorner(Notification, 0, 1)
+			MakeMiniCorner(Notification, 1, 1)
 			AddMiniMainEffects(Notification, self._ScreenGui, NOTIFY_H, true, C_ACCENT, C_ACCENT_LT, C_ACCENT_MID)
 
 			local HeaderIcon = Instance.new("ImageLabel")
@@ -4317,7 +4367,7 @@ setVisible = function(isVisible)
 			Frame.Size = UDim2.fromOffset(IMPORTANT_W, IMPORTANT_H)
 			Frame.Position = UDim2.new(0, -IMPORTANT_W, 1, -NOTIFY_BOTTOM)
 			Frame.BackgroundColor3 = RED_MAIN
-			Frame.BackgroundTransparency = 0.52
+			Frame.BackgroundTransparency = 0.75
 			Frame.BorderSizePixel = 0
 			Frame.ClipsDescendants = false
 			Frame.Parent = self._ScreenGui
@@ -4341,10 +4391,10 @@ setVisible = function(isVisible)
 			InnerStroke.Transparency = 0.12
 			InnerStroke.Parent = Inner
 
-			MakeStaticCorner(Frame, 0, 0, RED_ACCENT)
-			MakeStaticCorner(Frame, 1, 0, RED_ACCENT)
-			MakeStaticCorner(Frame, 0, 1, RED_ACCENT)
-			MakeStaticCorner(Frame, 1, 1, RED_ACCENT)
+			MakeStaticMiniCorner(Frame, 0, 0, RED_ACCENT)
+			MakeStaticMiniCorner(Frame, 1, 0, RED_ACCENT)
+			MakeStaticMiniCorner(Frame, 0, 1, RED_ACCENT)
+			MakeStaticMiniCorner(Frame, 1, 1, RED_ACCENT)
 			AddMiniMainEffects(Frame, self._ScreenGui, IMPORTANT_H, false, RED_ACCENT, RED_LT, RED_MID)
 
 			local AlertIcon = Instance.new("TextLabel")
@@ -4440,7 +4490,8 @@ setVisible = function(isVisible)
 			OKBtn.AnchorPoint = Vector2.new(1, 1)
 			OKBtn.Position = UDim2.new(1, -7, 1, -5)
 			OKBtn.BackgroundColor3 = RED_MAIN
-			OKBtn.BackgroundTransparency = 0.28
+			-- OKは枠線のみ。背景塗りやL字装飾は使用しない。
+			OKBtn.BackgroundTransparency = 1
 			OKBtn.BorderSizePixel = 0
 			OKBtn.Text = "ok"
 			OKBtn.Font = Enum.Font.Code
@@ -4453,10 +4504,6 @@ setVisible = function(isVisible)
 			OKStroke.Color = RED_ACCENT
 			OKStroke.Thickness = 1
 			OKStroke.Parent = OKBtn
-			MakeStaticCorner(OKBtn, 0, 0, RED_ACCENT)
-			MakeStaticCorner(OKBtn, 1, 0, RED_ACCENT)
-			MakeStaticCorner(OKBtn, 0, 1, RED_ACCENT)
-			MakeStaticCorner(OKBtn, 1, 1, RED_ACCENT)
 
 			local entry = { frame = Frame }
 			table.insert(_ImportantStack, entry)
