@@ -314,6 +314,32 @@ local function MakeHertaFrame(parent, size, layoutOrder)
 	return Bg
 end
 
+-- テーマに追従しない固定色のL字コーナー装飾。
+-- 重要通知の赤色固定デザインなど、テーマから独立させる要素に使用する。
+local function MakeStaticCorner(parent, xScale, yScale, color)
+	local H = Instance.new("Frame")
+	H.BorderSizePixel = 0
+	H.Size = UDim2.fromOffset(23, 2)
+	H.Position = UDim2.new(
+		xScale, xScale == 1 and -23 or 0,
+		yScale, yScale == 1 and -2 or 0
+	)
+	H.BackgroundColor3 = color
+	H.ZIndex = (parent.ZIndex or 1) + 1
+	H.Parent = parent
+
+	local V = Instance.new("Frame")
+	V.BorderSizePixel = 0
+	V.Size = UDim2.fromOffset(2, 23)
+	V.Position = UDim2.new(
+		xScale, xScale == 1 and -2 or 0,
+		yScale, yScale == 1 and -23 or 0
+	)
+	V.BackgroundColor3 = color
+	V.ZIndex = (parent.ZIndex or 1) + 1
+	V.Parent = parent
+end
+
 local MakeBgFrame = MakeHertaFrame
 
 -- ============================================================
@@ -3977,235 +4003,289 @@ setVisible = function(isVisible)
 		return Tab
 	end
 
-	-- ----------------------------------------------------------
-	--  通知スタック管理
-	-- ----------------------------------------------------------
-	local _NotifyStack  = {}   -- 現在表示中の通知リスト
-	local NOTIFY_W      = 173
-	local NOTIFY_H      = 48
-	local NOTIFY_GAP    = 5    -- 通知間の隙間
-	local NOTIFY_RIGHT  = 7   -- 画面右端からのマージン
-	local NOTIFY_BOTTOM = 7   -- 画面下端からのマージン
+		-- ----------------------------------------------------------
+		--  通知スタック管理
+		--  丸角を使わず、メインGUIと同じL字コーナー／ヘッダーラインで統一する。
+		-- ----------------------------------------------------------
+		local _NotifyStack = {}
+		local NOTIFY_W = 190
+		local NOTIFY_H = 62
+		local NOTIFY_GAP = 5
+		local NOTIFY_RIGHT = 7
+		local NOTIFY_BOTTOM = 7
 
-	-- 全通知の位置を下から上に並べ直す
-	local function _RealignNotifications()
-		local count = #_NotifyStack
-		for i, entry in ipairs(_NotifyStack) do
-			-- 下からi番目（i=1が最下、countが最上）
-			local slot = count - i  -- 0が最下段
-			local targetY = -(NOTIFY_H + NOTIFY_GAP) * slot - NOTIFY_H - NOTIFY_BOTTOM
-			TweenService:Create(
-				entry.frame,
-				TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-				{ Position = UDim2.new(1, -(NOTIFY_W + NOTIFY_RIGHT), 1, targetY) }
-			):Play()
-		end
-	end
-
-	-- ----------------------------------------------------------
-	--  Window:Notify(title, message, duration)
-	-- ----------------------------------------------------------
-	function Window:Notify(title, message, duration)
-
-		duration = duration or 3
-
-		local Notification = Instance.new("Frame")
-		Notification.Size = UDim2.fromOffset(NOTIFY_W, NOTIFY_H)
-		-- 画面外からスライドインする初期位置
-		Notification.Position = UDim2.new(1, NOTIFY_RIGHT, 1, -NOTIFY_BOTTOM)
-		Notification.BackgroundColor3 = C_BG
-		Notification.BackgroundTransparency = 0.35
-		Notification.BorderSizePixel = 0
-		Notification.Parent = self._ScreenGui
-		table.insert(ThemeListeners, { type = "bg", obj = Notification })
-
-		local NCorner = Instance.new("UICorner")
-		NCorner.CornerRadius = UDim.new(0, 6)
-		NCorner.Parent = Notification
-
-		local NStroke = Instance.new("UIStroke")
-		NStroke.Color = C_ACCENT
-		NStroke.Thickness = 1
-		NStroke.Parent = Notification
-		table.insert(ThemeListeners, { type = "stroke", obj = NStroke })
-
-		local AccentLine = Instance.new("Frame")
-		AccentLine.Size = UDim2.new(1, 0, 0, 1)
-		AccentLine.BorderSizePixel = 0
-		AccentLine.BackgroundColor3 = C_ACCENT
-		AccentLine.Parent = Notification
-		table.insert(ThemeListeners, { type = "headerline", obj = AccentLine })
-
-		local TitleLbl = Instance.new("TextLabel")
-		TitleLbl.Size = UDim2.new(1, -7, 0, 17)
-		TitleLbl.Position = UDim2.fromOffset(5, 3)
-		TitleLbl.BackgroundTransparency = 1
-		TitleLbl.Text = title
-		TitleLbl.Font = Enum.Font.Code
-		TitleLbl.TextSize = 11
-		TitleLbl.TextXAlignment = Enum.TextXAlignment.Left
-		TitleLbl.TextColor3 = C_ACCENT_LT
-		TitleLbl.Parent = Notification
-		table.insert(ThemeListeners, { type = "text_lt", obj = TitleLbl })
-
-		local MsgLbl = Instance.new("TextLabel")
-		MsgLbl.Size = UDim2.new(1, -7, 0, 24)
-		MsgLbl.Position = UDim2.fromOffset(5, 21)
-		MsgLbl.BackgroundTransparency = 1
-		MsgLbl.Text = message
-		MsgLbl.Font = Enum.Font.Code
-		MsgLbl.TextSize = 9
-		MsgLbl.TextXAlignment = Enum.TextXAlignment.Left
-		MsgLbl.TextWrapped = true
-		MsgLbl.TextColor3 = C_ACCENT_MID
-		MsgLbl.Parent = Notification
-		table.insert(ThemeListeners, { type = "text_mid", obj = MsgLbl })
-
-		-- スタックに登録して位置を整列
-		local entry = { frame = Notification }
-		table.insert(_NotifyStack, entry)
-		_RealignNotifications()
-
-		-- 期限後にスライドアウトして除去
-		task.delay(duration, function()
-			-- 画面外へスライドアウト
-			local curPos = Notification.Position
-			local T = TweenService:Create(
-				Notification,
-				TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
-				{ Position = UDim2.new(1, NOTIFY_RIGHT, curPos.Y.Scale, curPos.Y.Offset) }
-			)
-			T:Play()
-			T.Completed:Wait()
-			-- スタックから除去
-			for i, e in ipairs(_NotifyStack) do
-				if e == entry then
-					table.remove(_NotifyStack, i)
-					break
-				end
+		local function _RealignNotifications()
+			local count = #_NotifyStack
+			for i, entry in ipairs(_NotifyStack) do
+				local slot = count - i
+				local targetY = -(NOTIFY_H + NOTIFY_GAP) * slot - NOTIFY_H - NOTIFY_BOTTOM
+				TweenService:Create(
+					entry.frame,
+					TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+					{ Position = UDim2.new(1, -(NOTIFY_W + NOTIFY_RIGHT), 1, targetY) }
+				):Play()
 			end
-			if Notification then Notification:Destroy() end
-			-- 残りの通知を下方に詳める
+		end
+
+		-- ----------------------------------------------------------
+		--  Window:Notify(title, message, duration)
+		--  テーマ追従のミニHertaIXウィンドウ。タイトルと本文をラインで分離。
+		-- ----------------------------------------------------------
+		function Window:Notify(title, message, duration)
+			duration = duration or 3
+
+			local Notification = Instance.new("Frame")
+			Notification.Name = "HertaIXNotification"
+			Notification.Size = UDim2.fromOffset(NOTIFY_W, NOTIFY_H)
+			Notification.Position = UDim2.new(1, NOTIFY_RIGHT, 1, -NOTIFY_BOTTOM)
+			Notification.BackgroundColor3 = C_BG
+			Notification.BackgroundTransparency = 0.22
+			Notification.BorderSizePixel = 0
+			Notification.ClipsDescendants = false
+			Notification.Parent = self._ScreenGui
+			table.insert(ThemeListeners, { type = "bg", obj = Notification })
+
+			local Stroke = Instance.new("UIStroke")
+			Stroke.Color = C_ACCENT
+			Stroke.Thickness = 1
+			Stroke.Transparency = 0.35
+			Stroke.Parent = Notification
+			table.insert(ThemeListeners, { type = "stroke", obj = Stroke })
+
+			MakeCorner(Notification, 0, 0)
+			MakeCorner(Notification, 1, 0)
+			MakeCorner(Notification, 0, 1)
+			MakeCorner(Notification, 1, 1)
+
+			local HeaderLine = Instance.new("Frame")
+			HeaderLine.Size = UDim2.new(1, -8, 0, 1)
+			HeaderLine.Position = UDim2.fromOffset(4, 21)
+			HeaderLine.BorderSizePixel = 0
+			HeaderLine.BackgroundColor3 = C_ACCENT
+			HeaderLine.Parent = Notification
+			table.insert(ThemeListeners, { type = "headerline", obj = HeaderLine })
+
+			local HeaderTag = Instance.new("TextLabel")
+			HeaderTag.Size = UDim2.fromOffset(44, 15)
+			HeaderTag.Position = UDim2.fromOffset(6, 4)
+			HeaderTag.BackgroundTransparency = 1
+			HeaderTag.Text = "NOTICE"
+			HeaderTag.Font = Enum.Font.Code
+			HeaderTag.TextSize = 7
+			HeaderTag.TextXAlignment = Enum.TextXAlignment.Left
+			HeaderTag.TextColor3 = C_ACCENT_MID
+			HeaderTag.Parent = Notification
+			table.insert(ThemeListeners, { type = "text_mid", obj = HeaderTag })
+
+			local TitleLbl = Instance.new("TextLabel")
+			TitleLbl.Size = UDim2.new(1, -58, 0, 17)
+			TitleLbl.Position = UDim2.fromOffset(49, 3)
+			TitleLbl.BackgroundTransparency = 1
+			TitleLbl.Text = tostring(title or "")
+			TitleLbl.Font = Enum.Font.Code
+			TitleLbl.TextSize = 11
+			TitleLbl.TextTruncate = Enum.TextTruncate.AtEnd
+			TitleLbl.TextXAlignment = Enum.TextXAlignment.Left
+			TitleLbl.TextColor3 = C_ACCENT_LT
+			TitleLbl.Parent = Notification
+			table.insert(ThemeListeners, { type = "text_lt", obj = TitleLbl })
+
+			local DescriptionLabel = Instance.new("TextLabel")
+			DescriptionLabel.Size = UDim2.new(1, -14, 0, 31)
+			DescriptionLabel.Position = UDim2.fromOffset(7, 26)
+			DescriptionLabel.BackgroundTransparency = 1
+			DescriptionLabel.Text = tostring(message or "")
+			DescriptionLabel.Font = Enum.Font.Code
+			DescriptionLabel.TextSize = 8
+			DescriptionLabel.TextWrapped = true
+			DescriptionLabel.TextXAlignment = Enum.TextXAlignment.Left
+			DescriptionLabel.TextYAlignment = Enum.TextYAlignment.Top
+			DescriptionLabel.TextColor3 = C_ACCENT_MID
+			DescriptionLabel.Parent = Notification
+			table.insert(ThemeListeners, { type = "text_mid", obj = DescriptionLabel })
+
+			local entry = { frame = Notification }
+			table.insert(_NotifyStack, entry)
 			_RealignNotifications()
-		end)
-	end
 
-	-- ----------------------------------------------------------
-	--  Window:NotifyImportant(title, message)
-	--  重要通知：赤色固定・ OK ボタンで手動消去
-	-- ----------------------------------------------------------
-	local IMPORTANT_W      = 200
-	local IMPORTANT_H      = 64
-	local _ImportantStack  = {}
-
-	local function _RealignImportant()
-		local count = #_ImportantStack
-		for i, entry in ipairs(_ImportantStack) do
-			local slot = count - i
-			local targetY = -(IMPORTANT_H + NOTIFY_GAP) * slot - IMPORTANT_H - NOTIFY_BOTTOM
-			TweenService:Create(
-				entry.frame,
-				TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-				{ Position = UDim2.new(0, NOTIFY_RIGHT, 1, targetY) }
-			):Play()
-		end
-	end
-
-	function Window:NotifyImportant(title, message)
-		local RED_BG     = Color3.fromRGB(60,  8,   8)
-		local RED_ACCENT = Color3.fromRGB(220, 50,  50)
-		local RED_LT     = Color3.fromRGB(255, 120, 120)
-		local RED_MID    = Color3.fromRGB(200, 80,  80)
-
-		local Frame = Instance.new("Frame")
-		Frame.Size = UDim2.fromOffset(IMPORTANT_W, IMPORTANT_H)
-		Frame.Position = UDim2.new(0, -IMPORTANT_W, 1, -NOTIFY_BOTTOM)
-		Frame.BackgroundColor3 = RED_BG
-		Frame.BackgroundTransparency = 0.2
-		Frame.BorderSizePixel = 0
-		Frame.Parent = self._ScreenGui
-
-		local Corner = Instance.new("UICorner")
-		Corner.CornerRadius = UDim.new(0, 6)
-		Corner.Parent = Frame
-
-		local Stroke = Instance.new("UIStroke")
-		Stroke.Color = RED_ACCENT
-		Stroke.Thickness = 1.5
-		Stroke.Parent = Frame
-
-		local TopLine = Instance.new("Frame")
-		TopLine.Size = UDim2.new(1, 0, 0, 2)
-		TopLine.BorderSizePixel = 0
-		TopLine.BackgroundColor3 = RED_ACCENT
-		TopLine.Parent = Frame
-
-		local TitleLbl = Instance.new("TextLabel")
-		TitleLbl.Size = UDim2.new(1, -14, 0, 18)
-		TitleLbl.Position = UDim2.fromOffset(7, 4)
-		TitleLbl.BackgroundTransparency = 1
-		TitleLbl.Text = "⚠ " .. (title or "")
-		TitleLbl.Font = Enum.Font.GothamBold
-		TitleLbl.TextSize = 11
-		TitleLbl.TextXAlignment = Enum.TextXAlignment.Left
-		TitleLbl.TextColor3 = RED_LT
-		TitleLbl.Parent = Frame
-
-		local MsgLbl = Instance.new("TextLabel")
-		MsgLbl.Size = UDim2.new(1, -14, 0, 22)
-		MsgLbl.Position = UDim2.fromOffset(7, 23)
-		MsgLbl.BackgroundTransparency = 1
-		MsgLbl.Text = message or ""
-		MsgLbl.Font = Enum.Font.Code
-		MsgLbl.TextSize = 9
-		MsgLbl.TextXAlignment = Enum.TextXAlignment.Left
-		MsgLbl.TextWrapped = true
-		MsgLbl.TextColor3 = RED_MID
-		MsgLbl.Parent = Frame
-
-		-- OK ボタン（右下小さめ）
-		local OKBtn = Instance.new("TextButton")
-		OKBtn.Size = UDim2.fromOffset(28, 14)
-		OKBtn.AnchorPoint = Vector2.new(1, 1)
-		OKBtn.Position = UDim2.new(1, -6, 1, -5)
-		OKBtn.BackgroundColor3 = RED_ACCENT
-		OKBtn.BackgroundTransparency = 0.3
-		OKBtn.BorderSizePixel = 0
-		OKBtn.Text = "ok"
-		OKBtn.Font = Enum.Font.Code
-		OKBtn.TextSize = 9
-		OKBtn.TextColor3 = RED_LT
-		OKBtn.ZIndex = 2
-		OKBtn.Parent = Frame
-
-		local OKCorner = Instance.new("UICorner")
-		OKCorner.CornerRadius = UDim.new(0, 3)
-		OKCorner.Parent = OKBtn
-
-		-- スタック登録・整列
-		local entry = { frame = Frame }
-		table.insert(_ImportantStack, entry)
-		_RealignImportant()
-
-		local function Dismiss()
-			local curPos = Frame.Position
-			local T = TweenService:Create(
-				Frame,
-				TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
-				{ Position = UDim2.new(0, -IMPORTANT_W, curPos.Y.Scale, curPos.Y.Offset) }
-			)
-			T:Play()
-			T.Completed:Connect(function()
-				for i, e in ipairs(_ImportantStack) do
-					if e == entry then table.remove(_ImportantStack, i); break end
-				end
-				if Frame then Frame:Destroy() end
-				_RealignImportant()
+			task.delay(duration, function()
+				if not Notification.Parent then return end
+				local curPos = Notification.Position
+				local tween = TweenService:Create(
+					Notification,
+					TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
+					{ Position = UDim2.new(1, NOTIFY_RIGHT, curPos.Y.Scale, curPos.Y.Offset) }
+				)
+				tween.Completed:Connect(function()
+					for i, item in ipairs(_NotifyStack) do
+						if item == entry then
+							table.remove(_NotifyStack, i)
+							break
+						end
+					end
+					if Notification.Parent then Notification:Destroy() end
+					_RealignNotifications()
 				end)
+				tween:Play()
+			end)
 		end
 
-		OKBtn.MouseButton1Click:Connect(Dismiss)
-	end
+		-- ----------------------------------------------------------
+		--  Window:NotifyImportant(title, message)
+		--  赤色固定のミニHertaIXウィンドウ。ok操作でのみ消去する。
+		-- ----------------------------------------------------------
+		local IMPORTANT_W = 210
+		local IMPORTANT_H = 70
+		local _ImportantStack = {}
+
+		local function _RealignImportant()
+			local count = #_ImportantStack
+			for i, entry in ipairs(_ImportantStack) do
+				local slot = count - i
+				local targetY = -(IMPORTANT_H + NOTIFY_GAP) * slot - IMPORTANT_H - NOTIFY_BOTTOM
+				TweenService:Create(
+					entry.frame,
+					TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+					{ Position = UDim2.new(0, NOTIFY_RIGHT, 1, targetY) }
+				):Play()
+			end
+		end
+
+		function Window:NotifyImportant(title, message)
+			local RED_BG = Color3.fromRGB(60, 8, 8)
+			local RED_ACCENT = Color3.fromRGB(220, 50, 50)
+			local RED_LT = Color3.fromRGB(255, 145, 145)
+			local RED_MID = Color3.fromRGB(205, 85, 85)
+
+			local Frame = Instance.new("Frame")
+			Frame.Name = "HertaIXImportantNotification"
+			Frame.Size = UDim2.fromOffset(IMPORTANT_W, IMPORTANT_H)
+			Frame.Position = UDim2.new(0, -IMPORTANT_W, 1, -NOTIFY_BOTTOM)
+			Frame.BackgroundColor3 = RED_BG
+			Frame.BackgroundTransparency = 0.12
+			Frame.BorderSizePixel = 0
+			Frame.ClipsDescendants = false
+			Frame.Parent = self._ScreenGui
+
+			local Stroke = Instance.new("UIStroke")
+			Stroke.Color = RED_ACCENT
+			Stroke.Thickness = 1
+			Stroke.Transparency = 0.15
+			Stroke.Parent = Frame
+
+			MakeStaticCorner(Frame, 0, 0, RED_ACCENT)
+			MakeStaticCorner(Frame, 1, 0, RED_ACCENT)
+			MakeStaticCorner(Frame, 0, 1, RED_ACCENT)
+			MakeStaticCorner(Frame, 1, 1, RED_ACCENT)
+
+			local HeaderLine = Instance.new("Frame")
+			HeaderLine.Size = UDim2.new(1, -8, 0, 1)
+			HeaderLine.Position = UDim2.fromOffset(4, 23)
+			HeaderLine.BorderSizePixel = 0
+			HeaderLine.BackgroundColor3 = RED_ACCENT
+			HeaderLine.Parent = Frame
+
+			local AlertTag = Instance.new("TextLabel")
+			AlertTag.Size = UDim2.fromOffset(21, 16)
+			AlertTag.Position = UDim2.fromOffset(7, 4)
+			AlertTag.BackgroundTransparency = 1
+			AlertTag.Text = "[!]"
+			AlertTag.Font = Enum.Font.Code
+			AlertTag.TextSize = 9
+			AlertTag.TextXAlignment = Enum.TextXAlignment.Left
+			AlertTag.TextColor3 = RED_LT
+			AlertTag.Parent = Frame
+
+			local TitleLbl = Instance.new("TextLabel")
+			TitleLbl.Size = UDim2.new(1, -91, 0, 18)
+			TitleLbl.Position = UDim2.fromOffset(29, 3)
+			TitleLbl.BackgroundTransparency = 1
+			TitleLbl.Text = tostring(title or "")
+			TitleLbl.Font = Enum.Font.Code
+			TitleLbl.TextSize = 11
+			TitleLbl.TextTruncate = Enum.TextTruncate.AtEnd
+			TitleLbl.TextXAlignment = Enum.TextXAlignment.Left
+			TitleLbl.TextColor3 = RED_LT
+			TitleLbl.Parent = Frame
+
+			local HeaderTag = Instance.new("TextLabel")
+			HeaderTag.Size = UDim2.fromOffset(55, 15)
+			HeaderTag.AnchorPoint = Vector2.new(1, 0)
+			HeaderTag.Position = UDim2.new(1, -7, 0, 5)
+			HeaderTag.BackgroundTransparency = 1
+			HeaderTag.Text = "IMPORTANT"
+			HeaderTag.Font = Enum.Font.Code
+			HeaderTag.TextSize = 7
+			HeaderTag.TextXAlignment = Enum.TextXAlignment.Right
+			HeaderTag.TextColor3 = RED_MID
+			HeaderTag.Parent = Frame
+
+			local DescriptionLabel = Instance.new("TextLabel")
+			DescriptionLabel.Size = UDim2.new(1, -52, 0, 36)
+			DescriptionLabel.Position = UDim2.fromOffset(7, 29)
+			DescriptionLabel.BackgroundTransparency = 1
+			DescriptionLabel.Text = tostring(message or "")
+			DescriptionLabel.Font = Enum.Font.Code
+			DescriptionLabel.TextSize = 8
+			DescriptionLabel.TextWrapped = true
+			DescriptionLabel.TextXAlignment = Enum.TextXAlignment.Left
+			DescriptionLabel.TextYAlignment = Enum.TextYAlignment.Top
+			DescriptionLabel.TextColor3 = RED_MID
+			DescriptionLabel.Parent = Frame
+
+			local OKBtn = Instance.new("TextButton")
+			OKBtn.Size = UDim2.fromOffset(34, 15)
+			OKBtn.AnchorPoint = Vector2.new(1, 1)
+			OKBtn.Position = UDim2.new(1, -7, 1, -6)
+			OKBtn.BackgroundColor3 = RED_BG
+			OKBtn.BackgroundTransparency = 0.02
+			OKBtn.BorderSizePixel = 0
+			OKBtn.Text = "ok"
+			OKBtn.Font = Enum.Font.Code
+			OKBtn.TextSize = 9
+			OKBtn.TextColor3 = RED_LT
+			OKBtn.ZIndex = 2
+			OKBtn.Parent = Frame
+
+			local OKStroke = Instance.new("UIStroke")
+			OKStroke.Color = RED_ACCENT
+			OKStroke.Thickness = 1
+			OKStroke.Transparency = 0.2
+			OKStroke.Parent = OKBtn
+			MakeStaticCorner(OKBtn, 0, 0, RED_ACCENT)
+			MakeStaticCorner(OKBtn, 1, 0, RED_ACCENT)
+			MakeStaticCorner(OKBtn, 0, 1, RED_ACCENT)
+			MakeStaticCorner(OKBtn, 1, 1, RED_ACCENT)
+
+			local entry = { frame = Frame }
+			table.insert(_ImportantStack, entry)
+			_RealignImportant()
+
+			local dismissed = false
+			local function Dismiss()
+				if dismissed or not Frame.Parent then return end
+				dismissed = true
+				local curPos = Frame.Position
+				local tween = TweenService:Create(
+					Frame,
+					TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
+					{ Position = UDim2.new(0, -IMPORTANT_W, curPos.Y.Scale, curPos.Y.Offset) }
+				)
+				tween.Completed:Connect(function()
+					for i, item in ipairs(_ImportantStack) do
+						if item == entry then
+							table.remove(_ImportantStack, i)
+							break
+						end
+					end
+					if Frame.Parent then Frame:Destroy() end
+					_RealignImportant()
+				end)
+				tween:Play()
+			end
+
+			OKBtn.MouseButton1Click:Connect(Dismiss)
+		end
 
 	-- 初期ロード時の開くアニメーション
 	task.spawn(function()
