@@ -123,6 +123,9 @@ local C_TEXT       = Themes.near_future.text
 local C_DARK       = Themes.near_future.dark
 local C_BG         = Themes.near_future.bg
 
+-- 通常通知専用の低彩度・黒寄り水色。高い透明度でも白っぽく見えない色相を保つ。
+local C_NOTIFICATION_MUTED_AQUA = Color3.fromRGB(38, 70, 76)
+
 -- テーマ変更時に更新が必要なオブジェクトを登録するテーブル
 local ThemeListeners = {}  -- { type="stroke"|"bg"|"corner"|"text"|"mainbg", obj=Instance, ... }
 local _RainbowActive = false  -- rainbow スレッド制御フラグ
@@ -188,9 +191,8 @@ local function ApplyTheme(name)
 			obj.BackgroundColor3 = T.mainBg
 			obj.BackgroundTransparency = T.mainAlpha
 		elseif entry.type == "notification_bg" then
-			-- 暗い水色系の通知背景。テーマ背景色にaccentを30%混ぜ、
-			-- 透明度を上げて重く見えない明るさを確保する。
-			obj.BackgroundColor3 = T.bg:Lerp(T.accent, 0.30)
+			-- テーマ背景と低彩度の暗水色を混ぜる。透明度は0.9のまま維持する。
+			obj.BackgroundColor3 = T.bg:Lerp(C_NOTIFICATION_MUTED_AQUA, 0.65)
 			obj.BackgroundTransparency = 0.9
 		elseif entry.type == "text_accent" then
 			obj.TextColor3 = C_ACCENT
@@ -4184,7 +4186,7 @@ setVisible = function(isVisible)
 			Notification.Name = "HertaIXNotification"
 			Notification.Size = UDim2.fromOffset(NOTIFY_W, NOTIFY_H)
 			Notification.Position = UDim2.new(1, NOTIFY_RIGHT, 1, -NOTIFY_BOTTOM)
-			Notification.BackgroundColor3 = C_BG:Lerp(C_ACCENT, 0.30)
+			Notification.BackgroundColor3 = C_BG:Lerp(C_NOTIFICATION_MUTED_AQUA, 0.65)
 			Notification.BackgroundTransparency = 0.9
 			Notification.BorderSizePixel = 0
 			Notification.ClipsDescendants = false
