@@ -191,9 +191,9 @@ local function ApplyTheme(name)
 			obj.BackgroundColor3 = T.mainBg
 			obj.BackgroundTransparency = T.mainAlpha
 		elseif entry.type == "notification_bg" then
-			-- 通知の基準色は指定色 #00334C。透明度は0.9のまま維持する。
+			-- 通知の基準色は指定色 #00334C。透明度は0.5。
 			obj.BackgroundColor3 = C_NOTIFICATION_MUTED_AQUA
-			obj.BackgroundTransparency = 0.9
+			obj.BackgroundTransparency = 0.5
 		elseif entry.type == "text_accent" then
 			obj.TextColor3 = C_ACCENT
 		elseif entry.type == "text_lt" then
@@ -254,7 +254,7 @@ local function ApplyTheme(name)
 						elseif t=="notification_bg" then
 							-- rainbowテーマでも背景は黒トーンを維持する。
 							obj2.BackgroundColor3 = C_BG
-							obj2.BackgroundTransparency = 0.9
+							obj2.BackgroundTransparency = 0.5
 						elseif t=="text_accent" or t=="text_lt"
 						or t=="text_mid" or t=="text_main"
 						or t=="text_dark" then
@@ -4187,7 +4187,7 @@ setVisible = function(isVisible)
 			Notification.Size = UDim2.fromOffset(NOTIFY_W, NOTIFY_H)
 			Notification.Position = UDim2.new(1, NOTIFY_RIGHT, 1, -NOTIFY_BOTTOM)
 			Notification.BackgroundColor3 = C_NOTIFICATION_MUTED_AQUA
-			Notification.BackgroundTransparency = 0.9
+			Notification.BackgroundTransparency = 0.5
 			Notification.BorderSizePixel = 0
 			Notification.ClipsDescendants = false
 			Notification.Parent = self._ScreenGui
@@ -4369,7 +4369,7 @@ setVisible = function(isVisible)
 			Frame.Size = UDim2.fromOffset(IMPORTANT_W, IMPORTANT_H)
 			Frame.Position = UDim2.new(0, -IMPORTANT_W, 1, -NOTIFY_BOTTOM)
 			Frame.BackgroundColor3 = RED_MAIN
-			Frame.BackgroundTransparency = 0.9
+			Frame.BackgroundTransparency = 0.5
 			Frame.BorderSizePixel = 0
 			Frame.ClipsDescendants = false
 			Frame.Parent = self._ScreenGui
@@ -4488,7 +4488,8 @@ setVisible = function(isVisible)
 			DescriptionLabel.Parent = Frame
 
 			local OKBtn = Instance.new("TextButton")
-			OKBtn.Size = UDim2.fromOffset(30, 14)
+			-- 文字ではなく、ボタン領域全体を枠線で明確に囲う。
+			OKBtn.Size = UDim2.fromOffset(34, 16)
 			OKBtn.AnchorPoint = Vector2.new(1, 1)
 			OKBtn.Position = UDim2.new(1, -7, 1, -5)
 			OKBtn.BackgroundColor3 = RED_MAIN
@@ -4504,7 +4505,8 @@ setVisible = function(isVisible)
 
 			local OKStroke = Instance.new("UIStroke")
 			OKStroke.Color = RED_ACCENT
-			OKStroke.Thickness = 1
+			OKStroke.Thickness = 1.5
+			OKStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
 			OKStroke.Parent = OKBtn
 
 			local entry = { frame = Frame }
