@@ -3153,10 +3153,10 @@ function HertaIX:CreateWindow(titleText, theme)
 						local count = 0
 						for _ in pairs(Selected) do count = count + 1 end
 						if count == 0 then
-							Header.Text = titleText2 .. "  [未選択]  ▼"
+							Header.Text = titleText2 .. "  [No Selection]  ▼"
 							Header.TextColor3 = C_ACCENT_LT
 						else
-							Header.Text = titleText2 .. "  [" .. count .. "選択]  ▼"
+							Header.Text = titleText2 .. "  [" .. count .. " Selected]  ▼"
 							Header.TextColor3 = C_ACCENT
 						end
 					end
@@ -3869,8 +3869,8 @@ function HertaIX:CreateWindow(titleText, theme)
 								_activeViewports[playerName] = nil
 							if WindowRef then
 								WindowRef:Notify(
-									"Viewport 削除",
-									playerName .. " - " .. (reason or "選択解除"),
+									"Viewport Removed",
+									playerName .. " - " .. (reason or "Deselected"),
 									3
 								)
 							end
@@ -3899,7 +3899,7 @@ function HertaIX:CreateWindow(titleText, theme)
 
 
 						-- MultiDropdown
-						local dd = Tab:AddMultiDropdown("プレイヤー選択", GetPlayerNames(), function(selected)
+						local dd = Tab:AddMultiDropdown("Select Players", GetPlayerNames(), function(selected)
 							-- 新規選択 → Viewport生成
 							local selectedSet = {}
 							for _, name in ipairs(selected) do
@@ -3912,7 +3912,7 @@ function HertaIX:CreateWindow(titleText, theme)
 							-- 選択解除 → Viewport削除
 											for name in pairs(_activeViewports) do
 												if not selectedSet[name] then
-													RemovePlayerViewport(name, "選択解除")
+													RemovePlayerViewport(name, "Deselected")
 												end
 											end
 											if selectionCallback then selectionCallback(selected) end
@@ -3927,7 +3927,7 @@ function HertaIX:CreateWindow(titleText, theme)
 									local PlayerRemovingConn = PlayersService.PlayerRemoving:Connect(function(p)
 
 							if _activeViewports[p.Name] then
-								RemovePlayerViewport(p.Name, "退出")
+								RemovePlayerViewport(p.Name, "Player Left")
 							end
 							dd:Refresh(GetPlayerNames())
 						end)
@@ -3942,7 +3942,7 @@ function HertaIX:CreateWindow(titleText, theme)
 						end
 
 						function mvObj:RemoveViewport(playerName)
-							RemovePlayerViewport(playerName, "手動削除")
+							RemovePlayerViewport(playerName, "Removed Manually")
 							local cur = dd:Get()
 							local newSel = {}
 							for _, n in ipairs(cur) do
@@ -3955,7 +3955,7 @@ function HertaIX:CreateWindow(titleText, theme)
 										local names = {}
 										for name in pairs(_activeViewports) do table.insert(names, name) end
 										for _, name in ipairs(names) do
-											RemovePlayerViewport(name, "全削除")
+											RemovePlayerViewport(name, "Cleared")
 										end
 										dd:Clear()
 									end
@@ -3979,7 +3979,7 @@ setVisible = function(isVisible)
 											if PlayerRemovingConn then PlayerRemovingConn:Disconnect() end
 											local names = {}
 											for name in pairs(_activeViewports) do table.insert(names, name) end
-											for _, name in ipairs(names) do RemovePlayerViewport(name, "破棄") end
+											for _, name in ipairs(names) do RemovePlayerViewport(name, "Destroyed") end
 											dd:Destroy()
 										end,
 									})
