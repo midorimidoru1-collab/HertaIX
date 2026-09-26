@@ -1025,6 +1025,10 @@ function HertaIX:CreateWindow(titleText, theme)
 	local Draggable = true
 	local Resizable = true
 	local ResizeHandle = nil
+	-- Assigned after the Window component registry is initialized. Keeping
+	-- this local declaration before the button callbacks lets both window
+	-- transitions safely close any component-owned popup panel.
+	local CloseAllPopups = function() end
 
 	-- 最小化中のMain.Positionは上端アンカー基準の絶対座標になる。
 	-- その位置を、展開状態で使用するAnchorPoint/Scale/Offsetへ逆変換して保存する。
@@ -1050,6 +1054,7 @@ function HertaIX:CreateWindow(titleText, theme)
 	Minimize.MouseButton1Click:Connect(function()
 		if Transitioning then return end
 		Transitioning = true
+		CloseAllPopups()
 
 		if not Minimized then
 			TransitionState = "minimizing"
@@ -1285,6 +1290,7 @@ function HertaIX:CreateWindow(titleText, theme)
 		if Transitioning then return end
 		Transitioning = true
 		TransitionState = "closing"
+		CloseAllPopups()
 
 		-- 最小化状態から閉じた場合も、ミニバー復元後に矛盾した
 		-- 最小化フラグや非表示コンテンツを残さないよう展開状態へ正規化する。
@@ -1465,6 +1471,14 @@ function HertaIX:CreateWindow(titleText, theme)
 		Window._Components  = {}
 		Window._ComponentsById = {}
 		Window._Destroyed   = false
+
+		CloseAllPopups = function()
+			for _, component in ipairs(Window._Components) do
+				if component and component._ClosePopup then
+					component._ClosePopup()
+				end
+			end
+		end
 
 		function Window:_RegisterComponent(component, componentId)
 			if self._Destroyed then error("HertaIX: cannot add a component to a destroyed window", 2) end
