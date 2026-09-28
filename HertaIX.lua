@@ -129,44 +129,99 @@ local C_NOTIFICATION_MUTED_AQUA = Color3.fromRGB(0, 51, 76)
 -- テーマ変更時に更新が必要なオブジェクトを登録するテーブル
 local ThemeListeners = {}  -- { type="stroke"|"bg"|"corner"|"text"|"mainbg", obj=Instance, ... }
 
--- Fixed, maximum-saturation status colors for user-provided text.
+-- Fixed, maximum-saturation RichText highlights for status tokens.
 local STATUS_TEXT_COLORS = {
-	not_found = Color3.fromHSV(0, 1, 1),
-	error     = Color3.fromHSV(1 / 6, 1, 1),
-	success   = Color3.fromHSV(1 / 3, 1, 1),
+	not_found = { color = Color3.fromHSV(0, 1, 1),     richColor = "rgb(255,0,0)" },
+	error     = { color = Color3.fromHSV(1 / 6, 1, 1), richColor = "rgb(255,255,0)" },
+	success   = { color = Color3.fromHSV(1 / 3, 1, 1), richColor = "rgb(0,255,0)" },
 }
+local STATUS_TEXT_TOKENS = { "not_found", "error", "success" }
+local StatusTextStates = setmetatable({}, { __mode = "k" })
 
-local function ContainsStatusToken(text, token)
-	local searchFrom = 1
-	while true do
-		local first, last = string.find(text, token, searchFrom, true)
-		if not first then return false end
-		local before = first > 1 and string.sub(text, first - 1, first - 1) or ""
-		local after = last < #text and string.sub(text, last + 1, last + 1) or ""
-		if not string.match(before, "[%w_]") and not string.match(after, "[%w_]") then
-			return true
-		end
-		searchFrom = last + 1
-	end
+local function EscapeRichText(text)
+	local escaped = tostring(text or "")
+		:gsub("&", "&amp;")
+		:gsub("<", "&lt;")
+		:gsub(">", "&gt;")
+		:gsub('"', "&quot;")
+		:gsub("'", "&apos;")
+	return escaped
 end
 
-local function GetStatusTextColor(text)
-	local normalized = string.lower(tostring(text or ""))
-	if ContainsStatusToken(normalized, "not_found") then
-		return STATUS_TEXT_COLORS.not_found
-	elseif ContainsStatusToken(normalized, "error") then
-		return STATUS_TEXT_COLORS.error
-	elseif ContainsStatusToken(normalized, "success") then
-		return STATUS_TEXT_COLORS.success
+local function FindNextStatusToken(normalized, startIndex)
+	local bestFirst, bestLast, bestToken = nil, nil, nil
+	for _, token in ipairs(STATUS_TEXT_TOKENS) do
+		local searchFrom = startIndex
+		while true do
+			local first, last = string.find(normalized, token, searchFrom, true)
+			if not first then break end
+			local before = first > 1 and string.sub(normalized, first - 1, first - 1) or ""
+			local after = last < #normalized and string.sub(normalized, last + 1, last + 1) or ""
+			if not string.match(before, "[%w_]") and not string.match(after, "[%w_]") then
+				if not bestFirst or first < bestFirst then
+					bestFirst, bestLast, bestToken = first, last, token
+				end
+				break
+			end
+			searchFrom = last + 1
+		end
 	end
-	return nil
+	return bestFirst, bestLast, bestToken
+end
+
+local function FormatStatusText(text)
+	local rawText = tostring(text or "")
+	local normalized = string.lower(rawText)
+	local parts = {}
+	local cursor = 1
+	local matched = false
+	while cursor <= #rawText do
+		local first, last, token = FindNextStatusToken(normalized, cursor)
+		if not first then
+			table.insert(parts, EscapeRichText(string.sub(rawText, cursor)))
+			cursor = #rawText + 1
+			break
+		end
+		if first > cursor then
+			table.insert(parts, EscapeRichText(string.sub(rawText, cursor, first - 1)))
+		end
+		local color = STATUS_TEXT_COLORS[token]
+		table.insert(parts, '<font color="' .. color.richColor .. '">' .. EscapeRichText(string.sub(rawText, first, last)) .. "</font>")
+		cursor = last + 1
+		matched = true
+	end
+	return table.concat(parts), matched
+end
+
+local function GetStatusRawText(textObject)
+	local state = StatusTextStates[textObject]
+	return state and state.rawText or tostring(textObject.Text or "")
 end
 
 local function ApplyStatusTextColor(textObject, fallbackColor)
 	if not textObject then return false end
-	local statusColor = GetStatusTextColor(textObject.Text)
-	textObject.TextColor3 = statusColor or fallbackColor
-	return statusColor ~= nil
+	local state = StatusTextStates[textObject]
+	if not state then
+		state = { rawText = tostring(textObject.Text or ""), applying = false }
+		StatusTextStates[textObject] = state
+	end
+	local formattedText, matched = FormatStatusText(state.rawText)
+	textObject.TextColor3 = fallbackColor
+	textObject.RichText = true
+	state.applying = true
+	textObject.Text = formattedText
+	state.applying = false
+	return matched
+end
+
+local function PrepareStatusTextForInput(textObject, fallbackColor)
+	local state = StatusTextStates[textObject]
+	if not state then return end
+	textObject.TextColor3 = fallbackColor
+	state.applying = true
+	textObject.RichText = false
+	textObject.Text = state.rawText
+	state.applying = false
 end
 
 local function GetThemeTextColor(textType)
@@ -177,21 +232,33 @@ local function GetThemeTextColor(textType)
 	return C_TEXT
 end
 
-local function WatchStatusText(textObject, getFallbackColor)
+local function WatchStatusText(textObject, getFallbackColor, deferWhileFocused)
+	local state = { rawText = tostring(textObject.Text or ""), applying = false }
+	StatusTextStates[textObject] = state
 	local function Refresh()
 		if textObject and textObject.Parent then
+			if deferWhileFocused and textObject:IsFocused() then
+				textObject.TextColor3 = getFallbackColor()
+				return
+			end
 			ApplyStatusTextColor(textObject, getFallbackColor())
 		end
 	end
-	textObject:GetPropertyChangedSignal("Text"):Connect(Refresh)
+	textObject:GetPropertyChangedSignal("Text"):Connect(function()
+		if state.applying then return end
+		state.rawText = tostring(textObject.Text or "")
+		Refresh()
+	end)
 	Refresh()
+	return Refresh
 end
 
-local function RegisterStatusText(textObject, textType)
-	table.insert(ThemeListeners, { type = textType, obj = textObject, statusAware = true })
-	WatchStatusText(textObject, function()
+local function RegisterStatusText(textObject, textType, deferWhileFocused, getFallbackColor)
+	local fallback = getFallbackColor or function()
 		return GetThemeTextColor(textType)
-	end)
+	end
+	table.insert(ThemeListeners, { type = textType, obj = textObject, statusAware = true, statusFallback = fallback })
+	return WatchStatusText(textObject, fallback, deferWhileFocused)
 end
 
 local _RainbowActive = false  -- rainbow スレッド制御フラグ
@@ -264,7 +331,7 @@ local function ApplyTheme(name)
 			or entry.type == "text_mid" or entry.type == "text_main"
 			or entry.type == "text_dark" then
 			if entry.statusAware then
-				ApplyStatusTextColor(obj, GetThemeTextColor(entry.type))
+				ApplyStatusTextColor(obj, entry.statusFallback and entry.statusFallback() or GetThemeTextColor(entry.type))
 			else
 				obj.TextColor3 = GetThemeTextColor(entry.type)
 			end
@@ -322,9 +389,7 @@ local function ApplyTheme(name)
 					elseif t=="text_accent" or t=="text_lt"
 						or t=="text_mid" or t=="text_main"
 						or t=="text_dark" then
-						if not entry.statusAware or not GetStatusTextColor(obj2.Text) then
 							obj2.TextColor3 = col
-						end
 					elseif t=="toggle_state" then
 						obj2.TextColor3 = col
 					end
@@ -1613,12 +1678,6 @@ function HertaIX:CreateWindow(titleText, theme)
 			ApplyStatusTextColor(TitleLabel, C_TEXT)
 		end
 	end
-	TitleLabel:GetPropertyChangedSignal("Text"):Connect(function()
-		if GetStatusTextColor(TitleLabel.Text) then
-			_titleRainbowActive = false
-			_ResetTitleColor()
-		end
-	end)
 
 		-- ----------------------------------------------------------
 		--  Window configuration and lifecycle API
@@ -1752,11 +1811,6 @@ function HertaIX:CreateWindow(titleText, theme)
 	-- ----------------------------------------------------------
 	function Window:SetTitleRainbow(enabled)
 		_titleRainbow = enabled
-		if GetStatusTextColor(TitleLabel.Text) then
-			_titleRainbowActive = false
-			_ResetTitleColor()
-			return
-		end
 		-- rainbow テーマが有効な場合は何もしない
 		if _RainbowActive then return end
 		if enabled then
@@ -2512,7 +2566,7 @@ function HertaIX:CreateWindow(titleText, theme)
 					RegisterStatusText(Opt, "text_lt")
 
 					Opt.MouseEnter:Connect(function()
-						ApplyStatusTextColor(Opt, GetStatusTextColor(Opt.Text) and C_ACCENT_LT or C_ACCENT)
+						ApplyStatusTextColor(Opt, C_ACCENT)
 					end)
 					Opt.MouseLeave:Connect(function()
 						ApplyStatusTextColor(Opt, C_ACCENT_LT)
@@ -2615,7 +2669,7 @@ function HertaIX:CreateWindow(titleText, theme)
 
 					local obj = {}
 					function obj:Set(v) Label.Text = tostring(v) end
-					function obj:Get() return Label.Text end
+					function obj:Get() return GetStatusRawText(Label) end
 					return _AttachComponentManagement(obj, Bg, Window, config and config.Id, "Label")
 
 			end
@@ -2653,12 +2707,12 @@ function HertaIX:CreateWindow(titleText, theme)
 					Box.Text = tostring(Config.Default or "")
 					Box.PlaceholderText = tostring(Config.Placeholder or "Value...")
 					Box.PlaceholderColor3 = C_DARK
-					Box.Font = Enum.Font.Code
-					Box.TextSize = 10
-					Box.TextColor3 = C_ACCENT_LT
-					Box.Parent = Bg
-					table.insert(ThemeListeners, { type = "bg",      obj = Box })
-					RegisterStatusText(Box, "text_lt")
+						Box.Font = Enum.Font.Code
+						Box.TextSize = 10
+						Box.TextColor3 = C_ACCENT_LT
+						Box.Parent = Bg
+						table.insert(ThemeListeners, { type = "bg",      obj = Box })
+						local RefreshBoxStatus = RegisterStatusText(Box, "text_lt", true)
 
 					-- ボーダー（UIStrokeはテキストに適用しないよう TextBox の親フレームに付ける）
 					local BoxHolder = Instance.new("Frame")
@@ -2683,25 +2737,27 @@ function HertaIX:CreateWindow(titleText, theme)
 					BoxStroke.Parent = Box
 					table.insert(ThemeListeners, { type = "stroke", obj = BoxStroke })
 
-					Box.Focused:Connect(function()
-						BoxStroke.Thickness = 2
-						BoxStroke.Transparency = 0
-					end)
+						Box.Focused:Connect(function()
+							PrepareStatusTextForInput(Box, C_ACCENT_LT)
+							BoxStroke.Thickness = 2
+							BoxStroke.Transparency = 0
+						end)
 
-					Box.FocusLost:Connect(function()
-						BoxStroke.Thickness = 1
-						BoxStroke.Transparency = 0.5
-						if Config.Callback then
-							Config.Callback(Box.Text)
-						end
+						Box.FocusLost:Connect(function()
+							BoxStroke.Thickness = 1
+							BoxStroke.Transparency = 0.5
+							if Config.Callback then
+								Config.Callback(GetStatusRawText(Box))
+							end
+							RefreshBoxStatus()
 					end)
 
 					local TextboxObject = {}
-					function TextboxObject:Set(Value)
-						Box.Text = tostring(Value)
-					end
-					function TextboxObject:Get()
-						return Box.Text
+						function TextboxObject:Set(Value)
+							Box.Text = tostring(Value)
+						end
+						function TextboxObject:Get()
+							return GetStatusRawText(Box)
 					end
 					function TextboxObject:Clear()
 						Box.Text = ""
@@ -3310,7 +3366,7 @@ function HertaIX:CreateWindow(titleText, theme)
 							Row.LayoutOrder = i
 							Row.ZIndex = 51
 							Row.Parent = ListFrame
-							WatchStatusText(Row, function()
+							RegisterStatusText(Row, "text_lt", false, function()
 								return Selected[optName] and C_ACCENT or C_ACCENT_LT
 							end)
 
@@ -3459,7 +3515,7 @@ function HertaIX:CreateWindow(titleText, theme)
 
 						local secObj = {}
 						function secObj:Set(v) SectionLbl.Text = tostring(v) end
-						function secObj:Get() return SectionLbl.Text end
+						function secObj:Get() return GetStatusRawText(SectionLbl) end
 						return _AttachComponentManagement(secObj, Container, Window, config and config.Id, "Section")
 
 				end
