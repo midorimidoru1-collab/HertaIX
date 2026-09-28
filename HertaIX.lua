@@ -128,6 +128,72 @@ local C_NOTIFICATION_MUTED_AQUA = Color3.fromRGB(0, 51, 76)
 
 -- テーマ変更時に更新が必要なオブジェクトを登録するテーブル
 local ThemeListeners = {}  -- { type="stroke"|"bg"|"corner"|"text"|"mainbg", obj=Instance, ... }
+
+-- Fixed, maximum-saturation status colors for user-provided text.
+local STATUS_TEXT_COLORS = {
+	not_found = Color3.fromHSV(0, 1, 1),
+	error     = Color3.fromHSV(1 / 6, 1, 1),
+	success   = Color3.fromHSV(1 / 3, 1, 1),
+}
+
+local function ContainsStatusToken(text, token)
+	local searchFrom = 1
+	while true do
+		local first, last = string.find(text, token, searchFrom, true)
+		if not first then return false end
+		local before = first > 1 and string.sub(text, first - 1, first - 1) or ""
+		local after = last < #text and string.sub(text, last + 1, last + 1) or ""
+		if not string.match(before, "[%w_]") and not string.match(after, "[%w_]") then
+			return true
+		end
+		searchFrom = last + 1
+	end
+end
+
+local function GetStatusTextColor(text)
+	local normalized = string.lower(tostring(text or ""))
+	if ContainsStatusToken(normalized, "not_found") then
+		return STATUS_TEXT_COLORS.not_found
+	elseif ContainsStatusToken(normalized, "error") then
+		return STATUS_TEXT_COLORS.error
+	elseif ContainsStatusToken(normalized, "success") then
+		return STATUS_TEXT_COLORS.success
+	end
+	return nil
+end
+
+local function ApplyStatusTextColor(textObject, fallbackColor)
+	if not textObject then return false end
+	local statusColor = GetStatusTextColor(textObject.Text)
+	textObject.TextColor3 = statusColor or fallbackColor
+	return statusColor ~= nil
+end
+
+local function GetThemeTextColor(textType)
+	if textType == "text_accent" then return C_ACCENT end
+	if textType == "text_lt" then return C_ACCENT_LT end
+	if textType == "text_mid" then return C_ACCENT_MID end
+	if textType == "text_dark" then return C_DARK end
+	return C_TEXT
+end
+
+local function WatchStatusText(textObject, getFallbackColor)
+	local function Refresh()
+		if textObject and textObject.Parent then
+			ApplyStatusTextColor(textObject, getFallbackColor())
+		end
+	end
+	textObject:GetPropertyChangedSignal("Text"):Connect(Refresh)
+	Refresh()
+end
+
+local function RegisterStatusText(textObject, textType)
+	table.insert(ThemeListeners, { type = textType, obj = textObject, statusAware = true })
+	WatchStatusText(textObject, function()
+		return GetThemeTextColor(textType)
+	end)
+end
+
 local _RainbowActive = false  -- rainbow スレッド制御フラグ
 
 -- ------------------------------------------------------------
@@ -194,16 +260,14 @@ local function ApplyTheme(name)
 			-- 通知の基準色は指定色 #00334C。透明度は0.5。
 			obj.BackgroundColor3 = C_NOTIFICATION_MUTED_AQUA
 			obj.BackgroundTransparency = 0.5
-		elseif entry.type == "text_accent" then
-			obj.TextColor3 = C_ACCENT
-		elseif entry.type == "text_lt" then
-			obj.TextColor3 = C_ACCENT_LT
-		elseif entry.type == "text_mid" then
-			obj.TextColor3 = C_ACCENT_MID
-		elseif entry.type == "text_main" then
-			obj.TextColor3 = C_TEXT
-		elseif entry.type == "text_dark" then
-			obj.TextColor3 = C_DARK
+		elseif entry.type == "text_accent" or entry.type == "text_lt"
+			or entry.type == "text_mid" or entry.type == "text_main"
+			or entry.type == "text_dark" then
+			if entry.statusAware then
+				ApplyStatusTextColor(obj, GetThemeTextColor(entry.type))
+			else
+				obj.TextColor3 = GetThemeTextColor(entry.type)
+			end
 		elseif entry.type == "fill" then
 			obj.BackgroundColor3 = C_ACCENT
 		elseif entry.type == "track" then
@@ -248,17 +312,19 @@ local function ApplyTheme(name)
 						or t=="sweep" or t=="dataline"
 						or t=="track" or t=="knob" then
 						obj2.BackgroundColor3 = col
-						elseif t=="mainbg" then
-							obj2.BackgroundColor3 = col
-							obj2.BackgroundTransparency = mainAlpha
-						elseif t=="notification_bg" then
-							-- rainbowテーマでも背景は黒トーンを維持する。
-							obj2.BackgroundColor3 = C_BG
-							obj2.BackgroundTransparency = 0.5
-						elseif t=="text_accent" or t=="text_lt"
+					elseif t=="mainbg" then
+						obj2.BackgroundColor3 = col
+						obj2.BackgroundTransparency = mainAlpha
+					elseif t=="notification_bg" then
+						-- rainbowテーマでも背景は黒トーンを維持する。
+						obj2.BackgroundColor3 = C_BG
+						obj2.BackgroundTransparency = 0.5
+					elseif t=="text_accent" or t=="text_lt"
 						or t=="text_mid" or t=="text_main"
 						or t=="text_dark" then
-						obj2.TextColor3 = col
+						if not entry.statusAware or not GetStatusTextColor(obj2.Text) then
+							obj2.TextColor3 = col
+						end
 					elseif t=="toggle_state" then
 						obj2.TextColor3 = col
 					end
@@ -813,6 +879,7 @@ function HertaIX:CreateWindow(titleText, theme)
 	TitleLabel.Parent = Main
 	-- TitleLabel は text_main に登録せず、タイトル専用の状態で管理する
 	-- （虹色・フォント切り替えのため ThemeListeners から分離）
+	WatchStatusText(TitleLabel, function() return C_TEXT end)
 
 	-- タイトル左側アイコン
 	local HeaderIcon = Instance.new("ImageLabel")
@@ -1163,7 +1230,7 @@ function HertaIX:CreateWindow(titleText, theme)
 	MBLabel.TextXAlignment = Enum.TextXAlignment.Left
 	MBLabel.ZIndex = 101
 	MBLabel.Parent = MiniBar
-	table.insert(ThemeListeners, { type = "text_lt", obj = MBLabel })
+	RegisterStatusText(MBLabel, "text_lt")
 
 	-- ミニバー：右下に薄く HertaIX
 	local MBSub = Instance.new("TextLabel")
@@ -1543,9 +1610,15 @@ function HertaIX:CreateWindow(titleText, theme)
 	-- タイトルの色をテーマに合わせてリセットする内部関数
 	local function _ResetTitleColor()
 		if TitleLabel and TitleLabel.Parent then
-			TitleLabel.TextColor3 = C_TEXT
+			ApplyStatusTextColor(TitleLabel, C_TEXT)
 		end
 	end
+	TitleLabel:GetPropertyChangedSignal("Text"):Connect(function()
+		if GetStatusTextColor(TitleLabel.Text) then
+			_titleRainbowActive = false
+			_ResetTitleColor()
+		end
+	end)
 
 		-- ----------------------------------------------------------
 		--  Window configuration and lifecycle API
@@ -1679,6 +1752,11 @@ function HertaIX:CreateWindow(titleText, theme)
 	-- ----------------------------------------------------------
 	function Window:SetTitleRainbow(enabled)
 		_titleRainbow = enabled
+		if GetStatusTextColor(TitleLabel.Text) then
+			_titleRainbowActive = false
+			_ResetTitleColor()
+			return
+		end
 		-- rainbow テーマが有効な場合は何もしない
 		if _RainbowActive then return end
 		if enabled then
@@ -1807,7 +1885,7 @@ function HertaIX:CreateWindow(titleText, theme)
 		BtnTitle.TextColor3 = C_ACCENT_LT
 		BtnTitle.ZIndex = 11
 		BtnTitle.Parent = Btn
-		table.insert(ThemeListeners, { type = "text_lt", obj = BtnTitle })
+		RegisterStatusText(BtnTitle, "text_lt")
 
 		-- タブステータス（下段）
 		local BtnStatus = Instance.new("TextLabel")
@@ -1956,7 +2034,7 @@ function HertaIX:CreateWindow(titleText, theme)
 					NameLabel.TextXAlignment = Enum.TextXAlignment.Left
 					NameLabel.TextColor3 = C_ACCENT_LT
 					NameLabel.Parent = Bg
-					table.insert(ThemeListeners, { type = "text_lt", obj = NameLabel })
+					RegisterStatusText(NameLabel, "text_lt")
 
 					-- 右側: Clickバッジ（Toggleの BadgeBg と同じサイズ・構造）
 					local BadgeBg = Instance.new("Frame")
@@ -2050,7 +2128,7 @@ function HertaIX:CreateWindow(titleText, theme)
 			NameLabel.TextXAlignment = Enum.TextXAlignment.Left
 			NameLabel.TextColor3 = C_ACCENT_LT
 			NameLabel.Parent = Toggle
-			table.insert(ThemeListeners, { type = "text_lt", obj = NameLabel })
+			RegisterStatusText(NameLabel, "text_lt")
 
 			local BadgeBg = Instance.new("Frame")
 			BadgeBg.Size = UDim2.fromOffset(35, 15)
@@ -2142,7 +2220,7 @@ function HertaIX:CreateWindow(titleText, theme)
 			NameLabel.TextXAlignment = Enum.TextXAlignment.Left
 			NameLabel.TextColor3 = C_ACCENT_LT
 			NameLabel.Parent = Bg
-			table.insert(ThemeListeners, { type = "text_lt", obj = NameLabel })
+			RegisterStatusText(NameLabel, "text_lt")
 
 			local ValueLabel = Instance.new("TextLabel")
 			ValueLabel.Size = UDim2.new(0.3, -7, 0, 16)
@@ -2329,7 +2407,7 @@ function HertaIX:CreateWindow(titleText, theme)
 				Header.Text = titleText2 .. "  ▼"
 				Header.ZIndex = 21
 				Header.Parent = MainButton
-				table.insert(ThemeListeners, { type = "text_lt", obj = Header })
+				RegisterStatusText(Header, "text_lt")
 
 					-- ListFrameはMainの子として配置し、ZIndexで前面に重ねる（ScrollingFrame: 3段分 = 84px 上限）
 					local ITEM_H   = 19
@@ -2371,7 +2449,7 @@ function HertaIX:CreateWindow(titleText, theme)
 
 					local function UpdateHeader()
 						Header.Text = (Selected and tostring(Selected) or titleText2) .. "  ▼"
-						Header.TextColor3 = Selected and C_ACCENT or C_ACCENT_LT
+						ApplyStatusTextColor(Header, Selected and C_ACCENT or C_ACCENT_LT)
 						MBStroke2.Color = C_ACCENT
 					end
 
@@ -2431,10 +2509,14 @@ function HertaIX:CreateWindow(titleText, theme)
 					Opt.LayoutOrder = i
 					Opt.ZIndex = 23
 					Opt.Parent = ListFrame
-					table.insert(ThemeListeners, { type = "text_lt", obj = Opt })
+					RegisterStatusText(Opt, "text_lt")
 
-					Opt.MouseEnter:Connect(function() Opt.TextColor3 = C_ACCENT end)
-					Opt.MouseLeave:Connect(function() Opt.TextColor3 = C_ACCENT_LT end)
+					Opt.MouseEnter:Connect(function()
+						ApplyStatusTextColor(Opt, GetStatusTextColor(Opt.Text) and C_ACCENT_LT or C_ACCENT)
+					end)
+					Opt.MouseLeave:Connect(function()
+						ApplyStatusTextColor(Opt, C_ACCENT_LT)
+					end)
 
 					Opt.MouseButton1Click:Connect(function()
 						Selected = optName
@@ -2529,7 +2611,7 @@ function HertaIX:CreateWindow(titleText, theme)
 				Label.TextColor3 = C_ACCENT_LT
 				Label.TextXAlignment = Enum.TextXAlignment.Left
 				Label.Parent = Bg
-				table.insert(ThemeListeners, { type = "text_lt", obj = Label })
+				RegisterStatusText(Label, "text_lt")
 
 					local obj = {}
 					function obj:Set(v) Label.Text = tostring(v) end
@@ -2557,7 +2639,7 @@ function HertaIX:CreateWindow(titleText, theme)
 					NameLabel.TextXAlignment = Enum.TextXAlignment.Left
 					NameLabel.TextColor3 = C_ACCENT_LT
 					NameLabel.Parent = Bg
-					table.insert(ThemeListeners, { type = "text_lt", obj = NameLabel })
+					RegisterStatusText(NameLabel, "text_lt")
 
 					-- 右側: テキスト入力ボックス（Toggleの BadgeBg と同じサイズ感）
 					local Box = Instance.new("TextBox")
@@ -2576,7 +2658,7 @@ function HertaIX:CreateWindow(titleText, theme)
 					Box.TextColor3 = C_ACCENT_LT
 					Box.Parent = Bg
 					table.insert(ThemeListeners, { type = "bg",      obj = Box })
-					table.insert(ThemeListeners, { type = "text_lt", obj = Box })
+					RegisterStatusText(Box, "text_lt")
 
 					-- ボーダー（UIStrokeはテキストに適用しないよう TextBox の親フレームに付ける）
 					local BoxHolder = Instance.new("Frame")
@@ -2672,7 +2754,7 @@ function HertaIX:CreateWindow(titleText, theme)
 					NameLbl.TextColor3 = C_ACCENT_LT
 					NameLbl.TextXAlignment = Enum.TextXAlignment.Left
 					NameLbl.Parent = Header
-					table.insert(ThemeListeners, { type = "text_lt", obj = NameLbl })
+					RegisterStatusText(NameLbl, "text_lt")
 
 					-- カラープレビューボックス
 					local Preview = Instance.new("Frame")
@@ -2979,7 +3061,7 @@ function HertaIX:CreateWindow(titleText, theme)
 					NameLbl.TextColor3 = C_ACCENT_LT
 					NameLbl.TextXAlignment = Enum.TextXAlignment.Left
 					NameLbl.Parent = Bg
-					table.insert(ThemeListeners, { type = "text_lt", obj = NameLbl })
+					RegisterStatusText(NameLbl, "text_lt")
 
 					-- キー表示ボタン
 					local KeyBtn = Instance.new("TextButton")
@@ -3114,7 +3196,7 @@ function HertaIX:CreateWindow(titleText, theme)
 					Header.TextXAlignment = Enum.TextXAlignment.Left
 					Header.ZIndex = 3
 					Header.Parent = MainButton
-					table.insert(ThemeListeners, { type = "text_lt", obj = Header })
+					RegisterStatusText(Header, "text_lt")
 
 					-- クリックボタン
 					local ClickBtn = Instance.new("TextButton")
@@ -3168,10 +3250,10 @@ function HertaIX:CreateWindow(titleText, theme)
 						for _ in pairs(Selected) do count = count + 1 end
 						if count == 0 then
 							Header.Text = titleText2 .. "  [No Selection]  ▼"
-							Header.TextColor3 = C_ACCENT_LT
+							ApplyStatusTextColor(Header, C_ACCENT_LT)
 						else
 							Header.Text = titleText2 .. "  [" .. count .. " Selected]  ▼"
-							Header.TextColor3 = C_ACCENT
+							ApplyStatusTextColor(Header, C_ACCENT)
 						end
 					end
 
@@ -3228,14 +3310,17 @@ function HertaIX:CreateWindow(titleText, theme)
 							Row.LayoutOrder = i
 							Row.ZIndex = 51
 							Row.Parent = ListFrame
+							WatchStatusText(Row, function()
+								return Selected[optName] and C_ACCENT or C_ACCENT_LT
+							end)
 
 							local function RefreshRow()
 								if Selected[optName] then
 									Row.Text = "  ■ " .. tostring(optName)
-									Row.TextColor3 = C_ACCENT
+									ApplyStatusTextColor(Row, C_ACCENT)
 								else
 									Row.Text = "  □ " .. tostring(optName)
-									Row.TextColor3 = C_ACCENT_LT
+									ApplyStatusTextColor(Row, C_ACCENT_LT)
 								end
 							end
 							RefreshRow()
@@ -3370,7 +3455,7 @@ function HertaIX:CreateWindow(titleText, theme)
 					SectionLbl.TextSize = 9
 					SectionLbl.TextColor3 = C_ACCENT_MID
 					SectionLbl.Parent = Container
-					table.insert(ThemeListeners, { type = "text_mid", obj = SectionLbl })
+					RegisterStatusText(SectionLbl, "text_mid")
 
 						local secObj = {}
 						function secObj:Set(v) SectionLbl.Text = tostring(v) end
@@ -3408,7 +3493,7 @@ function HertaIX:CreateWindow(titleText, theme)
 					NameLbl.TextColor3 = C_ACCENT_LT
 					NameLbl.TextXAlignment = Enum.TextXAlignment.Left
 					NameLbl.Parent = Container
-					table.insert(ThemeListeners, { type = "text_lt", obj = NameLbl })
+					RegisterStatusText(NameLbl, "text_lt")
 
 					-- 数値テキスト（右端）
 					local ValLbl = Instance.new("TextLabel")
@@ -3620,7 +3705,7 @@ function HertaIX:CreateWindow(titleText, theme)
 								lbl.Text = labelText
 								lbl.ZIndex = 4
 								lbl.Parent = InfoPanel
-								table.insert(ThemeListeners, { type = "text_lt", obj = lbl })
+								RegisterStatusText(lbl, "text_lt")
 								return lbl
 							end
 
@@ -4038,7 +4123,7 @@ setVisible = function(isVisible)
 			TitleLbl.TextXAlignment = Enum.TextXAlignment.Left
 			TitleLbl.TextColor3 = C_ACCENT_LT
 			TitleLbl.Parent = Bg
-			table.insert(ThemeListeners, { type = "text_lt", obj = TitleLbl })
+			RegisterStatusText(TitleLbl, "text_lt")
 
 			local Desc = Instance.new("TextLabel")
 			Desc.Size = UDim2.new(1, -11, 0, 0)
@@ -4053,7 +4138,7 @@ setVisible = function(isVisible)
 			Desc.TextColor3 = C_ACCENT_MID
 			Desc.Text = descText or ""
 			Desc.Parent = Bg
-			table.insert(ThemeListeners, { type = "text_mid", obj = Desc })
+			RegisterStatusText(Desc, "text_mid")
 
 			local function UpdateSize()
 				local H = 30 + Desc.TextBounds.Y + 10
@@ -4255,7 +4340,7 @@ setVisible = function(isVisible)
 			TitleLbl.TextColor3 = C_TEXT
 			TitleLbl.ZIndex = 5
 			TitleLbl.Parent = Notification
-			table.insert(ThemeListeners, { type = "text_main", obj = TitleLbl })
+			RegisterStatusText(TitleLbl, "text_main")
 
 			local ByLabel = Instance.new("TextLabel")
 			ByLabel.Size = UDim2.fromOffset(49, 10)
@@ -4323,7 +4408,7 @@ setVisible = function(isVisible)
 			DescriptionLabel.TextColor3 = C_ACCENT_MID
 			DescriptionLabel.ZIndex = 5
 			DescriptionLabel.Parent = Notification
-			table.insert(ThemeListeners, { type = "text_mid", obj = DescriptionLabel })
+			RegisterStatusText(DescriptionLabel, "text_mid")
 
 			local entry = { frame = Notification }
 			table.insert(_NotifyStack, entry)
@@ -4436,6 +4521,7 @@ setVisible = function(isVisible)
 			TitleLbl.TextColor3 = RED_LT
 			TitleLbl.ZIndex = 5
 			TitleLbl.Parent = Frame
+			WatchStatusText(TitleLbl, function() return RED_LT end)
 
 			local ByLabel = Instance.new("TextLabel")
 			ByLabel.Size = UDim2.fromOffset(68, 12)
@@ -4500,6 +4586,7 @@ setVisible = function(isVisible)
 			DescriptionLabel.TextColor3 = RED_MID
 			DescriptionLabel.ZIndex = 5
 			DescriptionLabel.Parent = Frame
+			WatchStatusText(DescriptionLabel, function() return RED_MID end)
 
 			local OKBtn = Instance.new("TextButton")
 			-- 文字ではなく、ボタン領域全体を枠線で明確に囲う。
