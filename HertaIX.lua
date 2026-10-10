@@ -10,6 +10,7 @@ local RunService       = game:GetService("RunService")
 
 local LP        = Players.LocalPlayer
 local PlayerGui = LP:WaitForChild("PlayerGui")
+local _SurfaceFollowSerial = 0
 
 -- ============================================================
 --  カラーテーマ定義
@@ -839,6 +840,21 @@ function HertaIX:CreateWindow(titleText, theme, options)
 		SurfaceGui.PixelsPerStud = 50
 		SurfaceGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 		SurfaceGui.Enabled = true
+		SurfaceGui.Active = true
+
+		-- PixelsPerStudではSurfacePartのFront面のX/Y寸法が描画領域を決める。
+		local requiredWidthStuds = 400 / 50
+		local requiredHeightStuds = 253 / 50
+		if SurfacePart.Size.X < requiredWidthStuds or SurfacePart.Size.Y < requiredHeightStuds then
+			warn(string.format(
+				"HertaIX SurfaceMode: SurfacePart.Size is %.2f x %.2f studs; the 400 x 253 px window at PixelsPerStud=50 requires at least %.2f x %.2f studs on the Front face. The library will not resize the part.",
+				SurfacePart.Size.X, SurfacePart.Size.Y, requiredWidthStuds, requiredHeightStuds
+			))
+		end
+		if not SurfacePart.CanQuery then
+			warn("HertaIX SurfaceMode: SurfacePart.CanQuery is false; SurfaceGui mouse/touch hit testing may not work. Set CanQuery = true on the supplied part if input is unavailable.")
+		end
+
 		SurfaceGui.Parent = PlayerGui
 		ScreenGui = SurfaceGui
 	else
@@ -1709,6 +1725,7 @@ function HertaIX:CreateWindow(titleText, theme, options)
 			local THIRD_ENTER = 5
 			local DISTANCE = 3
 			local SMOOTHNESS = 12
+			local surfacePartMissingReported = false
 
 			local function GetCharacterParts()
 				local character = LP.Character
@@ -1720,14 +1737,26 @@ function HertaIX:CreateWindow(titleText, theme, options)
 				return character, head, torso
 			end
 
-			local SurfaceFollowName = "HertaIXSurfaceFollow_" .. tostring(Main:GetDebugId())
+			-- 保護されたデバッグ識別子APIは通常のゲーム内スクリプトから利用できないため使用しない。
+			-- ライブラリ内の単調増加IDで複数Windowの登録名を分離する。
+			_SurfaceFollowSerial += 1
+			local SurfaceFollowName = "HertaIXSurfaceFollow_" .. tostring(_SurfaceFollowSerial)
 			SurfaceFollowConn = SurfaceFollowName
 			RunService:BindToRenderStep(
 				SurfaceFollowName,
 				Enum.RenderPriority.Camera.Value + 1,
 				function(dt)
 					local camera = workspace.CurrentCamera
-					if not camera or not SurfacePart.Parent then return end
+					if not SurfacePart.Parent then
+						if not surfacePartMissingReported then
+							warn("HertaIX SurfaceMode: the supplied SurfacePart was removed; follow updates have been stopped.")
+							surfacePartMissingReported = true
+						end
+						RunService:UnbindFromRenderStep(SurfaceFollowName)
+						SurfaceFollowConn = nil
+						return
+					end
+					if not camera then return end
 					local _, head, torso = GetCharacterParts()
 					if not head or not torso then return end
 
