@@ -804,18 +804,51 @@ function HertaIX:ReloadAssets()
 	pcall(_LoadAudioAssets)
 end
 
-function HertaIX:CreateWindow(titleText, theme)
+function HertaIX:CreateWindow(titleText, theme, options)
+
+	-- 後方互換: CreateWindow(title, theme) を維持し、第三引数だけでSurfaceを有効化する。
+	if type(theme) == "table" and options == nil then
+		options = theme
+		theme = options.Theme or options.theme
+	end
+	options = options or {}
 
 	-- テーマ引数が指定されていれば起動時に適用
 	if theme then
 		ApplyTheme(theme)
 	end
 
-	local ScreenGui = Instance.new("ScreenGui")
-	ScreenGui.Name = "HertaIXGui"
-	ScreenGui.ResetOnSpawn = false
-	ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-	ScreenGui.Parent = PlayerGui
+	local SurfaceMode = options.SurfaceMode == true
+	local SurfacePart = options.SurfacePart
+	if SurfaceMode then
+		if typeof(SurfacePart) ~= "Instance" or not SurfacePart:IsA("BasePart") then
+			error("HertaIX: SurfaceMode requires options.SurfacePart to be a BasePart", 2)
+		end
+	end
+
+	-- ScreenGuiとSurfaceGuiは共通のlocal名で扱い、既存コンポーネントを同じUIツリーへ生成する。
+	local ScreenGui
+	if SurfaceMode then
+		local SurfaceGui = Instance.new("SurfaceGui")
+		SurfaceGui.Name = "HertaIXSurfaceGui"
+		SurfaceGui.Adornee = SurfacePart
+		SurfaceGui.Face = Enum.NormalId.Front
+		SurfaceGui.AlwaysOnTop = true
+		SurfaceGui.LightInfluence = 0
+		SurfaceGui.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud
+		SurfaceGui.PixelsPerStud = 50
+		SurfaceGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+		SurfaceGui.Enabled = true
+		SurfaceGui.Parent = PlayerGui
+		ScreenGui = SurfaceGui
+	else
+		local ScreenLayer = Instance.new("ScreenGui")
+		ScreenLayer.Name = "HertaIXGui"
+		ScreenLayer.ResetOnSpawn = false
+		ScreenLayer.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+		ScreenLayer.Parent = PlayerGui
+		ScreenGui = ScreenLayer
+	end
 
 	local Main = Instance.new("Frame")
 	Main.Size = UDim2.fromOffset(400, 253)
@@ -981,6 +1014,7 @@ function HertaIX:CreateWindow(titleText, theme)
 	DragHandle.TextSize = 16
 	DragHandle.TextColor3 = C_ACCENT_LT
 	DragHandle.ZIndex = 10
+	DragHandle.Visible = not SurfaceMode
 	DragHandle.Parent = Main
 	table.insert(ThemeListeners, { type = "text_lt", obj = DragHandle })
 
@@ -1101,6 +1135,7 @@ function HertaIX:CreateWindow(titleText, theme)
 	DragLine.BorderSizePixel = 0
 	DragLine.Text = ""
 	DragLine.ZIndex = 10
+	DragLine.Visible = not SurfaceMode
 	DragLine.Parent = Main
 	table.insert(ThemeListeners, { type = "headerline", obj = DragLine })
 
@@ -1154,8 +1189,12 @@ function HertaIX:CreateWindow(titleText, theme)
 	local Minimized = false
 	local Transitioning = false
 	local TransitionState = nil
-	local Draggable = true
-	local Resizable = true
+	-- SurfacePartは利用者所有のものとして扱い、ライブラリは削除・再生成しない。
+	local SurfaceFollowConn = nil
+	local SurfaceModeState = false -- false=third person, true=first person
+	local SurfaceCurrentCFrame = SurfaceMode and SurfacePart.CFrame or nil
+	local Draggable = not SurfaceMode
+	local Resizable = not SurfaceMode
 	local ResizeHandle = nil
 	-- Assigned after the Window component registry is initialized. Keeping
 	-- this local declaration before the button callbacks lets both window
@@ -1489,7 +1528,7 @@ function HertaIX:CreateWindow(titleText, theme)
 		end)
 
 		-- ドラッグ（DragHandle・DragLineを押している間のみ可能）
-		Draggable = true
+		Draggable = not SurfaceMode
 		local Dragging = false
 		local DragStart, StartPos
 		local DragInputChangedConn = nil
@@ -1548,11 +1587,12 @@ function HertaIX:CreateWindow(titleText, theme)
 		ResizeHandle.TextSize = 13
 		ResizeHandle.TextColor3 = C_ACCENT_LT
 		ResizeHandle.ZIndex = 20
+		ResizeHandle.Visible = not SurfaceMode
 		ResizeHandle.Parent = Main
 		table.insert(ThemeListeners, { type = "text_lt", obj = ResizeHandle })
 		table.insert(_CRTHideList, ResizeHandle)
 
-		Resizable = true
+		Resizable = not SurfaceMode
 		local Resizing = false
 		local ResizeStart, ResizeStartSize
 		local ResizeInputChangedConn = nil
@@ -1593,6 +1633,8 @@ function HertaIX:CreateWindow(titleText, theme)
 		local Window = {}
 
 	Window._ScreenGui   = ScreenGui
+	Window._SurfaceMode = SurfaceMode
+	Window._SurfacePart = SurfaceMode and SurfacePart or nil
 	Window._Main        = Main
 	Window._TabBar      = TabBar
 	Window._ContentArea = ContentArea
@@ -1656,6 +1698,60 @@ function HertaIX:CreateWindow(titleText, theme)
 			local result = {}
 			for _, component in ipairs(self._Components) do table.insert(result, component) end
 			return result
+		end
+
+		-- ============================================================
+		-- Surfaceモード追従
+		-- 一人称: カメラ基準 / 三人称: 位置は胴体、向きはHead基準
+		-- ============================================================
+		if SurfaceMode then
+			local FIRST_ENTER = 3
+			local THIRD_ENTER = 5
+			local DISTANCE = 3
+			local SMOOTHNESS = 12
+
+			local function GetCharacterParts()
+				local character = LP.Character
+				if not character then return nil end
+				local head = character:FindFirstChild("Head")
+				local torso = character:FindFirstChild("Torso")
+				torso = torso or character:FindFirstChild("UpperTorso")
+				torso = torso or character:FindFirstChild("HumanoidRootPart")
+				return character, head, torso
+			end
+
+			local SurfaceFollowName = "HertaIXSurfaceFollow_" .. tostring(Main:GetDebugId())
+			SurfaceFollowConn = SurfaceFollowName
+			RunService:BindToRenderStep(
+				SurfaceFollowName,
+				Enum.RenderPriority.Camera.Value + 1,
+				function(dt)
+					local camera = workspace.CurrentCamera
+					if not camera or not SurfacePart.Parent then return end
+					local _, head, torso = GetCharacterParts()
+					if not head or not torso then return end
+
+					local distance = (camera.CFrame.Position - head.Position).Magnitude
+					if SurfaceModeState then
+						if distance >= THIRD_ENTER then SurfaceModeState = false end
+					else
+						if distance < FIRST_ENTER then SurfaceModeState = true end
+					end
+
+					local targetCFrame
+					if SurfaceModeState then
+						local position = camera.CFrame.Position + camera.CFrame.LookVector * DISTANCE
+						targetCFrame = CFrame.lookAt(position, camera.CFrame.Position)
+					else
+						local position = torso.Position + torso.CFrame.LookVector * DISTANCE
+						targetCFrame = CFrame.lookAt(position, head.Position)
+					end
+
+					local alpha = 1 - math.exp(-SMOOTHNESS * math.max(dt, 0))
+					SurfaceCurrentCFrame = SurfaceCurrentCFrame:Lerp(targetCFrame, alpha)
+					SurfacePart.CFrame = SurfaceCurrentCFrame
+				end
+			)
 		end
 
 		-- タイトル専用状態
@@ -1730,7 +1826,8 @@ function HertaIX:CreateWindow(titleText, theme)
 
 		function Window:SetDraggable(enabled)
 			if self._Destroyed then return false end
-			Draggable = enabled == true
+			-- Surfaceモードでは画面座標ベースのウィンドウ移動を常に無効化する。
+			Draggable = SurfaceMode and false or (enabled == true)
 			if not Draggable then Dragging = false end
 			DragHandle.Visible = Draggable and Main.Visible and not Minimized
 			DragLine.Visible = Draggable and Main.Visible and not Minimized
@@ -1743,7 +1840,8 @@ function HertaIX:CreateWindow(titleText, theme)
 
 		function Window:SetResizable(enabled)
 			if self._Destroyed or Transitioning then return false end
-			Resizable = enabled == true
+			-- SurfaceモードではSurfacePartの大きさをUI操作で変更しない。
+			Resizable = SurfaceMode and false or (enabled == true)
 			if not Resizable then Resizing = false end
 			ResizeHandle.Visible = Resizable and Main.Visible and not Minimized
 			return Resizable
@@ -1751,6 +1849,14 @@ function HertaIX:CreateWindow(titleText, theme)
 
 		function Window:IsResizable()
 			return (not self._Destroyed) and Resizable
+		end
+
+		function Window:IsSurfaceMode()
+			return (not self._Destroyed) and SurfaceMode
+		end
+
+		function Window:GetSurfacePart()
+			return SurfaceMode and SurfacePart or nil
 		end
 
 		function Window:GetState()
@@ -1775,6 +1881,10 @@ function HertaIX:CreateWindow(titleText, theme)
 			TransitionState = nil
 			if DragInputChangedConn then DragInputChangedConn:Disconnect(); DragInputChangedConn = nil end
 			if ResizeInputChangedConn then ResizeInputChangedConn:Disconnect(); ResizeInputChangedConn = nil end
+			if SurfaceFollowConn then
+				RunService:UnbindFromRenderStep(SurfaceFollowConn)
+				SurfaceFollowConn = nil
+			end
 			local snapshot = {}
 			for _, component in ipairs(self._Components) do table.insert(snapshot, component) end
 			for _, component in ipairs(snapshot) do
