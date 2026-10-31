@@ -805,6 +805,7 @@ function HertaIX:ReloadAssets()
 end
 
 local _OutButtons = {}
+local _OutButtonGui = nil
 
 local function _OneCharacter(value)
 	local text = tostring(value or "O")
@@ -828,6 +829,15 @@ end
 -- GUI外に配置できる独立ボタン。Window/Tabには所属しない。
 function HertaIX:CreateOutButton(config)
 	config = config or {}
+	if not _OutButtonGui or not _OutButtonGui.Parent then
+		_OutButtonGui = Instance.new("ScreenGui")
+		_OutButtonGui.Name = "HertaIXOutButtonGui"
+		_OutButtonGui.ResetOnSpawn = false
+		_OutButtonGui.IgnoreGuiInset = true
+		_OutButtonGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+		_OutButtonGui.DisplayOrder = 100
+		_OutButtonGui.Parent = PlayerGui
+	end
 	local Root = Instance.new("TextButton")
 	Root.Name = "HertaIXOutButton"
 	Root.Size = UDim2.fromOffset(50, 50)
@@ -843,7 +853,7 @@ function HertaIX:CreateOutButton(config)
 	Root.TextXAlignment = Enum.TextXAlignment.Center
 	Root.TextYAlignment = Enum.TextYAlignment.Center
 	Root.ZIndex = 300
-	Root.Parent = PlayerGui
+	Root.Parent = _OutButtonGui
 	table.insert(ThemeListeners, { type = "notification_bg", obj = Root })
 	table.insert(ThemeListeners, { type = "text_lt", obj = Root })
 
@@ -985,6 +995,10 @@ function HertaIX:CreateOutButton(config)
 			if _OutButtons[i] == outButton then table.remove(_OutButtons, i); break end
 		end
 		if Root.Parent then Root:Destroy() end
+		if #_OutButtons == 0 and _OutButtonGui and _OutButtonGui.Parent then
+			_OutButtonGui:Destroy()
+			_OutButtonGui = nil
+		end
 		return true
 	end
 	function outButton:IsDestroyed()
