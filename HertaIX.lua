@@ -10,7 +10,6 @@ local RunService       = game:GetService("RunService")
 
 local LP        = Players.LocalPlayer
 local PlayerGui = LP:WaitForChild("PlayerGui")
-local _SurfaceFollowSerial = 0
 
 -- ============================================================
 --  カラーテーマ定義
@@ -805,66 +804,239 @@ function HertaIX:ReloadAssets()
 	pcall(_LoadAudioAssets)
 end
 
-function HertaIX:CreateWindow(titleText, theme, options)
+local _OutButtons = {}
 
-	-- 後方互換: CreateWindow(title, theme) を維持し、第三引数だけでSurfaceを有効化する。
-	if type(theme) == "table" and options == nil then
-		options = theme
-		theme = options.Theme or options.theme
+local function _OneCharacter(value)
+	local text = tostring(value or "O")
+	if text == "" then return "O" end
+	local ok, second = pcall(function() return utf8.offset(text, 2) end)
+	if ok and second then return string.sub(text, 1, second - 1) end
+	return string.sub(text, 1, 1)
+end
+
+local function _OutButtonClamp(position)
+	local camera = workspace.CurrentCamera
+	local viewport = camera and camera.ViewportSize or Vector2.new(800, 600)
+	local maxX = math.max(0, viewport.X - 75)
+	local maxY = math.max(0, viewport.Y - 50)
+	return Vector2.new(
+		math.clamp(position.X, 0, maxX),
+		math.clamp(position.Y, 0, maxY)
+	)
+end
+
+-- GUI外に配置できる独立ボタン。Window/Tabには所属しない。
+function HertaIX:CreateOutButton(config)
+	config = config or {}
+	local Root = Instance.new("TextButton")
+	Root.Name = "HertaIXOutButton"
+	Root.Size = UDim2.fromOffset(50, 50)
+	Root.Position = UDim2.fromOffset(0, 0)
+	Root.BackgroundColor3 = C_NOTIFICATION_MUTED_AQUA
+	Root.BackgroundTransparency = 0.5
+	Root.BorderSizePixel = 0
+	Root.AutoButtonColor = false
+	Root.Text = _OneCharacter(config.Text or "O")
+	Root.Font = Enum.Font.Code
+	Root.TextSize = 20
+	Root.TextColor3 = C_ACCENT_LT
+	Root.TextXAlignment = Enum.TextXAlignment.Center
+	Root.TextYAlignment = Enum.TextYAlignment.Center
+	Root.ZIndex = 300
+	Root.Parent = PlayerGui
+	table.insert(ThemeListeners, { type = "notification_bg", obj = Root })
+	table.insert(ThemeListeners, { type = "text_lt", obj = Root })
+
+	local OuterStroke = Instance.new("UIStroke")
+	OuterStroke.Color = C_ACCENT
+	OuterStroke.Thickness = 2
+	OuterStroke.Parent = Root
+	table.insert(ThemeListeners, { type = "stroke", obj = OuterStroke })
+
+	local Inner = Instance.new("Frame")
+	Inner.Size = UDim2.new(1, -8, 1, -8)
+	Inner.Position = UDim2.fromOffset(4, 4)
+	Inner.BackgroundTransparency = 1
+	Inner.BorderSizePixel = 0
+	Inner.ZIndex = 301
+	Inner.Parent = Root
+	local InnerStroke = Instance.new("UIStroke")
+	InnerStroke.Color = C_ACCENT_MID
+	InnerStroke.Thickness = 1
+	InnerStroke.Transparency = 0.25
+	InnerStroke.Parent = Inner
+	table.insert(ThemeListeners, { type = "stroke", obj = InnerStroke })
+
+	MakeMiniCorner(Root, 0, 0)
+	MakeMiniCorner(Root, 1, 0)
+	MakeMiniCorner(Root, 0, 1)
+	MakeMiniCorner(Root, 1, 1)
+
+	local DeleteButton = Instance.new("TextButton")
+	DeleteButton.Name = "DeleteButton"
+	DeleteButton.Size = UDim2.fromOffset(25, 25)
+	DeleteButton.Position = UDim2.fromOffset(50, 0)
+	DeleteButton.BackgroundColor3 = Color3.fromRGB(255, 70, 70)
+	DeleteButton.BackgroundTransparency = 0.18
+	DeleteButton.BorderSizePixel = 0
+	DeleteButton.AutoButtonColor = false
+	DeleteButton.Text = "×"
+	DeleteButton.Font = Enum.Font.Code
+	DeleteButton.TextSize = 17
+	DeleteButton.TextColor3 = Color3.fromRGB(255, 220, 220)
+	DeleteButton.ZIndex = 305
+	DeleteButton.Parent = Root
+	local DeleteStroke = Instance.new("UIStroke")
+	DeleteStroke.Color = Color3.fromRGB(255, 105, 105)
+	DeleteStroke.Thickness = 1
+	DeleteStroke.Parent = DeleteButton
+
+	local MoveButton = Instance.new("TextButton")
+	MoveButton.Name = "MoveButton"
+	MoveButton.Size = UDim2.fromOffset(25, 25)
+	MoveButton.Position = UDim2.fromOffset(50, 25)
+	MoveButton.BackgroundColor3 = C_NOTIFICATION_MUTED_AQUA
+	MoveButton.BackgroundTransparency = 0.5
+	MoveButton.BorderSizePixel = 0
+	MoveButton.AutoButtonColor = false
+	MoveButton.Text = "✣"
+	MoveButton.Font = Enum.Font.Code
+	MoveButton.TextSize = 13
+	MoveButton.TextColor3 = C_ACCENT_LT
+	MoveButton.ZIndex = 305
+	MoveButton.Parent = Root
+	table.insert(ThemeListeners, { type = "notification_bg", obj = MoveButton })
+	table.insert(ThemeListeners, { type = "text_lt", obj = MoveButton })
+	local MoveStroke = Instance.new("UIStroke")
+	MoveStroke.Color = C_ACCENT
+	MoveStroke.Thickness = 1
+	MoveStroke.Transparency = 0.25
+	MoveStroke.Parent = MoveButton
+	table.insert(ThemeListeners, { type = "stroke", obj = MoveStroke })
+
+	local position = _OutButtonClamp(Vector2.new(0, 0))
+	Root.Position = UDim2.fromOffset(position.X, position.Y)
+	local callback = config.Callback
+	local dragging = false
+	local dragStart
+	local positionStart
+	local destroyed = false
+	local inputConn
+	local outButton = {}
+
+	local function setPosition(value)
+		if destroyed then return false end
+		local nextPosition
+		if typeof(value) == "Vector2" then
+			nextPosition = value
+		elseif typeof(value) == "UDim2" then
+			nextPosition = Vector2.new(value.X.Offset, value.Y.Offset)
+		else
+			error("HertaIX: OutButton:SetPosition expects Vector2 or UDim2", 2)
+		end
+		nextPosition = _OutButtonClamp(nextPosition)
+		position = nextPosition
+		Root.Position = UDim2.fromOffset(position.X, position.Y)
+		return position
 	end
-	options = options or {}
+
+	function outButton:SetVisible(value)
+		if destroyed then return false end
+		Root.Visible = value == true
+		return Root.Visible
+	end
+	function outButton:IsVisible()
+		return not destroyed and Root.Visible
+	end
+	function outButton:SetText(value)
+		if destroyed then return false end
+		Root.Text = _OneCharacter(value)
+		return Root.Text
+	end
+	function outButton:GetText()
+		return destroyed and nil or Root.Text
+	end
+	function outButton:SetPosition(value)
+		return setPosition(value)
+	end
+	function outButton:GetPosition()
+		return destroyed and nil or position
+	end
+	function outButton:SetCallback(fn)
+		if destroyed then return false end
+		if fn ~= nil and type(fn) ~= "function" then error("HertaIX: OutButton:SetCallback expects a function or nil", 2) end
+		callback = fn
+		return true
+	end
+	function outButton:GetCallback()
+		return destroyed and nil or callback
+	end
+	function outButton:Fire(...)
+		if destroyed or type(callback) ~= "function" then return false end
+		callback(...)
+		return true
+	end
+	function outButton:Destroy()
+		if destroyed then return false end
+		destroyed = true
+		dragging = false
+		if inputConn then inputConn:Disconnect(); inputConn = nil end
+		for i = #_OutButtons, 1, -1 do
+			if _OutButtons[i] == outButton then table.remove(_OutButtons, i); break end
+		end
+		if Root.Parent then Root:Destroy() end
+		return true
+	end
+	function outButton:IsDestroyed()
+		return destroyed
+	end
+
+	Root.MouseButton1Click:Connect(function()
+		if not destroyed and not dragging then outButton:Fire() end
+	end)
+	DeleteButton.MouseButton1Click:Connect(function()
+		outButton:Destroy()
+	end)
+	MoveButton.InputBegan:Connect(function(input)
+		if destroyed then return end
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			dragging = true
+			dragStart = input.Position
+			positionStart = position
+			input.Changed:Connect(function()
+				if input.UserInputState == Enum.UserInputState.End then dragging = false end
+			end)
+		end
+	end)
+	inputConn = UserInputService.InputChanged:Connect(function(input)
+		if not dragging then return end
+		if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+			setPosition(positionStart + input.Position - dragStart)
+		end
+	end)
+
+	table.insert(_OutButtons, outButton)
+	return outButton
+end
+
+function HertaIX:GetOutButtons()
+	local result = {}
+	for _, button in ipairs(_OutButtons) do table.insert(result, button) end
+	return result
+end
+
+function HertaIX:CreateWindow(titleText, theme)
 
 	-- テーマ引数が指定されていれば起動時に適用
 	if theme then
 		ApplyTheme(theme)
 	end
 
-	local SurfaceMode = options.SurfaceMode == true
-	local SurfacePart = options.SurfacePart
-	if SurfaceMode then
-		if typeof(SurfacePart) ~= "Instance" or not SurfacePart:IsA("BasePart") then
-			error("HertaIX: SurfaceMode requires options.SurfacePart to be a BasePart", 2)
-		end
-	end
-
-	-- ScreenGuiとSurfaceGuiは共通のlocal名で扱い、既存コンポーネントを同じUIツリーへ生成する。
-	local ScreenGui
-	if SurfaceMode then
-		local SurfaceGui = Instance.new("SurfaceGui")
-		SurfaceGui.Name = "HertaIXSurfaceGui"
-		SurfaceGui.Adornee = SurfacePart
-		SurfaceGui.Face = Enum.NormalId.Front
-		SurfaceGui.AlwaysOnTop = true
-		SurfaceGui.LightInfluence = 0
-		SurfaceGui.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud
-		SurfaceGui.PixelsPerStud = 50
-		SurfaceGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-		SurfaceGui.Enabled = true
-		SurfaceGui.Active = true
-
-		-- PixelsPerStudではSurfacePartのFront面のX/Y寸法が描画領域を決める。
-		local requiredWidthStuds = 400 / 50
-		local requiredHeightStuds = 253 / 50
-		if SurfacePart.Size.X < requiredWidthStuds or SurfacePart.Size.Y < requiredHeightStuds then
-			warn(string.format(
-				"HertaIX SurfaceMode: SurfacePart.Size is %.2f x %.2f studs; the 400 x 253 px window at PixelsPerStud=50 requires at least %.2f x %.2f studs on the Front face. The library will not resize the part.",
-				SurfacePart.Size.X, SurfacePart.Size.Y, requiredWidthStuds, requiredHeightStuds
-			))
-		end
-		if not SurfacePart.CanQuery then
-			warn("HertaIX SurfaceMode: SurfacePart.CanQuery is false; SurfaceGui mouse/touch hit testing may not work. Set CanQuery = true on the supplied part if input is unavailable.")
-		end
-
-		SurfaceGui.Parent = PlayerGui
-		ScreenGui = SurfaceGui
-	else
-		local ScreenLayer = Instance.new("ScreenGui")
-		ScreenLayer.Name = "HertaIXGui"
-		ScreenLayer.ResetOnSpawn = false
-		ScreenLayer.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-		ScreenLayer.Parent = PlayerGui
-		ScreenGui = ScreenLayer
-	end
+	local ScreenGui = Instance.new("ScreenGui")
+	ScreenGui.Name = "HertaIXGui"
+	ScreenGui.ResetOnSpawn = false
+	ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+	ScreenGui.Parent = PlayerGui
 
 	local Main = Instance.new("Frame")
 	Main.Size = UDim2.fromOffset(400, 253)
@@ -1030,7 +1202,6 @@ function HertaIX:CreateWindow(titleText, theme, options)
 	DragHandle.TextSize = 16
 	DragHandle.TextColor3 = C_ACCENT_LT
 	DragHandle.ZIndex = 10
-	DragHandle.Visible = not SurfaceMode
 	DragHandle.Parent = Main
 	table.insert(ThemeListeners, { type = "text_lt", obj = DragHandle })
 
@@ -1151,7 +1322,6 @@ function HertaIX:CreateWindow(titleText, theme, options)
 	DragLine.BorderSizePixel = 0
 	DragLine.Text = ""
 	DragLine.ZIndex = 10
-	DragLine.Visible = not SurfaceMode
 	DragLine.Parent = Main
 	table.insert(ThemeListeners, { type = "headerline", obj = DragLine })
 
@@ -1205,12 +1375,8 @@ function HertaIX:CreateWindow(titleText, theme, options)
 	local Minimized = false
 	local Transitioning = false
 	local TransitionState = nil
-	-- SurfacePartは利用者所有のものとして扱い、ライブラリは削除・再生成しない。
-	local SurfaceFollowConn = nil
-	local SurfaceModeState = false -- false=third person, true=first person
-	local SurfaceCurrentCFrame = SurfaceMode and SurfacePart.CFrame or nil
-	local Draggable = not SurfaceMode
-	local Resizable = not SurfaceMode
+	local Draggable = true
+	local Resizable = true
 	local ResizeHandle = nil
 	-- Assigned after the Window component registry is initialized. Keeping
 	-- this local declaration before the button callbacks lets both window
@@ -1544,7 +1710,7 @@ function HertaIX:CreateWindow(titleText, theme, options)
 		end)
 
 		-- ドラッグ（DragHandle・DragLineを押している間のみ可能）
-		Draggable = not SurfaceMode
+		Draggable = true
 		local Dragging = false
 		local DragStart, StartPos
 		local DragInputChangedConn = nil
@@ -1603,12 +1769,11 @@ function HertaIX:CreateWindow(titleText, theme, options)
 		ResizeHandle.TextSize = 13
 		ResizeHandle.TextColor3 = C_ACCENT_LT
 		ResizeHandle.ZIndex = 20
-		ResizeHandle.Visible = not SurfaceMode
 		ResizeHandle.Parent = Main
 		table.insert(ThemeListeners, { type = "text_lt", obj = ResizeHandle })
 		table.insert(_CRTHideList, ResizeHandle)
 
-		Resizable = not SurfaceMode
+		Resizable = true
 		local Resizing = false
 		local ResizeStart, ResizeStartSize
 		local ResizeInputChangedConn = nil
@@ -1649,8 +1814,6 @@ function HertaIX:CreateWindow(titleText, theme, options)
 		local Window = {}
 
 	Window._ScreenGui   = ScreenGui
-	Window._SurfaceMode = SurfaceMode
-	Window._SurfacePart = SurfaceMode and SurfacePart or nil
 	Window._Main        = Main
 	Window._TabBar      = TabBar
 	Window._ContentArea = ContentArea
@@ -1714,73 +1877,6 @@ function HertaIX:CreateWindow(titleText, theme, options)
 			local result = {}
 			for _, component in ipairs(self._Components) do table.insert(result, component) end
 			return result
-		end
-
-		-- ============================================================
-		-- Surfaceモード追従
-		-- 一人称: カメラ基準 / 三人称: 位置は胴体、向きはHead基準
-		-- ============================================================
-		if SurfaceMode then
-			local FIRST_ENTER = 3
-			local THIRD_ENTER = 5
-			local DISTANCE = 3
-			local SMOOTHNESS = 12
-			local surfacePartMissingReported = false
-
-			local function GetCharacterParts()
-				local character = LP.Character
-				if not character then return nil end
-				local head = character:FindFirstChild("Head")
-				local torso = character:FindFirstChild("Torso")
-				torso = torso or character:FindFirstChild("UpperTorso")
-				torso = torso or character:FindFirstChild("HumanoidRootPart")
-				return character, head, torso
-			end
-
-			-- 保護されたデバッグ識別子APIは通常のゲーム内スクリプトから利用できないため使用しない。
-			-- ライブラリ内の単調増加IDで複数Windowの登録名を分離する。
-			_SurfaceFollowSerial += 1
-			local SurfaceFollowName = "HertaIXSurfaceFollow_" .. tostring(_SurfaceFollowSerial)
-			SurfaceFollowConn = SurfaceFollowName
-			RunService:BindToRenderStep(
-				SurfaceFollowName,
-				Enum.RenderPriority.Camera.Value + 1,
-				function(dt)
-					local camera = workspace.CurrentCamera
-					if not SurfacePart.Parent then
-						if not surfacePartMissingReported then
-							warn("HertaIX SurfaceMode: the supplied SurfacePart was removed; follow updates have been stopped.")
-							surfacePartMissingReported = true
-						end
-						RunService:UnbindFromRenderStep(SurfaceFollowName)
-						SurfaceFollowConn = nil
-						return
-					end
-					if not camera then return end
-					local _, head, torso = GetCharacterParts()
-					if not head or not torso then return end
-
-					local distance = (camera.CFrame.Position - head.Position).Magnitude
-					if SurfaceModeState then
-						if distance >= THIRD_ENTER then SurfaceModeState = false end
-					else
-						if distance < FIRST_ENTER then SurfaceModeState = true end
-					end
-
-					local targetCFrame
-					if SurfaceModeState then
-						local position = camera.CFrame.Position + camera.CFrame.LookVector * DISTANCE
-						targetCFrame = CFrame.lookAt(position, camera.CFrame.Position)
-					else
-						local position = torso.Position + torso.CFrame.LookVector * DISTANCE
-						targetCFrame = CFrame.lookAt(position, head.Position)
-					end
-
-					local alpha = 1 - math.exp(-SMOOTHNESS * math.max(dt, 0))
-					SurfaceCurrentCFrame = SurfaceCurrentCFrame:Lerp(targetCFrame, alpha)
-					SurfacePart.CFrame = SurfaceCurrentCFrame
-				end
-			)
 		end
 
 		-- タイトル専用状態
@@ -1853,10 +1949,9 @@ function HertaIX:CreateWindow(titleText, theme, options)
 			return Main.Position
 		end
 
-		function Window:SetDraggable(enabled)
-			if self._Destroyed then return false end
-			-- Surfaceモードでは画面座標ベースのウィンドウ移動を常に無効化する。
-			Draggable = SurfaceMode and false or (enabled == true)
+	function Window:SetDraggable(enabled)
+		if self._Destroyed then return false end
+		Draggable = enabled == true
 			if not Draggable then Dragging = false end
 			DragHandle.Visible = Draggable and Main.Visible and not Minimized
 			DragLine.Visible = Draggable and Main.Visible and not Minimized
@@ -1867,10 +1962,9 @@ function HertaIX:CreateWindow(titleText, theme, options)
 			return (not self._Destroyed) and Draggable
 		end
 
-		function Window:SetResizable(enabled)
-			if self._Destroyed or Transitioning then return false end
-			-- SurfaceモードではSurfacePartの大きさをUI操作で変更しない。
-			Resizable = SurfaceMode and false or (enabled == true)
+	function Window:SetResizable(enabled)
+		if self._Destroyed or Transitioning then return false end
+		Resizable = enabled == true
 			if not Resizable then Resizing = false end
 			ResizeHandle.Visible = Resizable and Main.Visible and not Minimized
 			return Resizable
@@ -1878,14 +1972,6 @@ function HertaIX:CreateWindow(titleText, theme, options)
 
 		function Window:IsResizable()
 			return (not self._Destroyed) and Resizable
-		end
-
-		function Window:IsSurfaceMode()
-			return (not self._Destroyed) and SurfaceMode
-		end
-
-		function Window:GetSurfacePart()
-			return SurfaceMode and SurfacePart or nil
 		end
 
 		function Window:GetState()
@@ -1910,10 +1996,6 @@ function HertaIX:CreateWindow(titleText, theme, options)
 			TransitionState = nil
 			if DragInputChangedConn then DragInputChangedConn:Disconnect(); DragInputChangedConn = nil end
 			if ResizeInputChangedConn then ResizeInputChangedConn:Disconnect(); ResizeInputChangedConn = nil end
-			if SurfaceFollowConn then
-				RunService:UnbindFromRenderStep(SurfaceFollowConn)
-				SurfaceFollowConn = nil
-			end
 			local snapshot = {}
 			for _, component in ipairs(self._Components) do table.insert(snapshot, component) end
 			for _, component in ipairs(snapshot) do
