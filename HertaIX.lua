@@ -134,8 +134,9 @@ local STATUS_TEXT_COLORS = {
 	not_found = { color = Color3.fromHSV(0, 1, 1),     richColor = "rgb(255,0,0)" },
 	error     = { color = Color3.fromHSV(1 / 6, 1, 1), richColor = "rgb(255,255,0)" },
 	success   = { color = Color3.fromHSV(1 / 3, 1, 1), richColor = "rgb(0,255,0)" },
+	attention = { color = Color3.fromHSV(1 / 12, 1, 1), richColor = "rgb(255,128,0)" },
 }
-local STATUS_TEXT_TOKENS = { "not_found", "error", "success" }
+local STATUS_TEXT_TOKENS = { "not_found", "error", "success", "attention" }
 local StatusTextStates = setmetatable({}, { __mode = "k" })
 
 local function EscapeRichText(text)
